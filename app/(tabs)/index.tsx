@@ -8,6 +8,7 @@ import {
   Text,
   View,
 } from "react-native";
+import * as Haptics from "expo-haptics";
 
 type Choice = {
   id: "left" | "right";
@@ -96,6 +97,7 @@ export default function HomeScreen() {
   const question = SAMPLE_QUESTIONS[index] ?? null;
 
   const position = React.useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  const entryScale = React.useRef(new Animated.Value(1)).current;
 
   const rotate = position.x.interpolate({
     inputRange: [-SCREEN_W, 0, SCREEN_W],
@@ -121,6 +123,8 @@ export default function HomeScreen() {
 
   const forceSwipe = (direction: "left" | "right") => {
     const x = direction === "right" ? SWIPE_OUT_DISTANCE : -SWIPE_OUT_DISTANCE;
+
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     Animated.timing(position, {
       toValue: { x, y: 0 },
@@ -160,6 +164,15 @@ export default function HomeScreen() {
     [index]
   );
 
+  React.useEffect(() => {
+    entryScale.setValue(0.985);
+    Animated.timing(entryScale, {
+      toValue: 1,
+      duration: 200,
+      useNativeDriver: false,
+    }).start();
+  }, [index, entryScale]);
+
   return (
     <View style={{ flex: 1, backgroundColor: "black", padding: 24 }}>
       <View style={{ flex: 1, justifyContent: "center" }}>
@@ -177,6 +190,7 @@ export default function HomeScreen() {
                 overflow: "hidden",
               },
               cardStyle,
+              { transform: [...cardStyle.transform, { scale: entryScale }] },
             ]}
           >
             {/* Header */}
