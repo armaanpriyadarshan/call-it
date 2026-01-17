@@ -1,10 +1,12 @@
 import Octicons from "@expo/vector-icons/Octicons";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
+import { useFocusEffect } from "expo-router";
 import React from "react";
 import {
     Animated,
     Image,
+    Keyboard,
     KeyboardAvoidingView,
     Platform,
     Pressable,
@@ -21,7 +23,40 @@ type ImageInfo = {
   height?: number;
 };
 
-const SUGGESTED_CATEGORIES = ["Style", "Food", "Career", "Social", "Travel", "Technology", "Sports", "Entertainment", "Health", "Education"];
+const SUGGESTED_CATEGORIES = [
+  "Style",
+  "Food",
+  "Career",
+  "Social",
+  "Travel",
+  "Technology",
+  "Sports",
+  "Entertainment",
+  "Health",
+  "Education",
+];
+
+const COLORS = {
+  background: "#1c1c1c",
+  border: "#333",
+  borderError: "#ff6b6b",
+  text: "white",
+  textSecondary: "#aaa",
+  placeholder: "#666",
+  overlay: "rgba(0, 0, 0, 0.7)",
+};
+
+const resetFormData = {
+  title: "",
+  prompt: "",
+  leftChoice: "",
+  rightChoice: "",
+  category: "",
+  promptImage: null as ImageInfo | null,
+  leftImage: null as ImageInfo | null,
+  rightImage: null as ImageInfo | null,
+  submitted: false,
+};
 
 const AutocompleteInput: React.FC<{
   value: string;
@@ -36,12 +71,11 @@ const AutocompleteInput: React.FC<{
   const [filteredSuggestions, setFilteredSuggestions] = React.useState<string[]>([]);
   const fadeAnim = React.useRef(new Animated.Value(0)).current;
   const isSelectingRef = React.useRef(false);
+  const inputRef = React.useRef<TextInput>(null);
 
   React.useEffect(() => {
     if (value.trim() && isFocused) {
-      const filtered = suggestions.filter((cat) =>
-        cat.toLowerCase().includes(value.toLowerCase())
-      );
+      const filtered = suggestions.filter((cat) => cat.toLowerCase().includes(value.toLowerCase()));
       setFilteredSuggestions(filtered);
     } else if (isFocused) {
       setFilteredSuggestions(suggestions);
@@ -70,7 +104,7 @@ const AutocompleteInput: React.FC<{
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     isSelectingRef.current = true;
     onChangeText(suggestion);
-    
+
     Animated.timing(fadeAnim, {
       toValue: 0,
       duration: 150,
@@ -81,11 +115,9 @@ const AutocompleteInput: React.FC<{
         isSelectingRef.current = false;
       }, 100);
     });
-    
+
     inputRef.current?.focus();
   };
-
-  const inputRef = React.useRef<TextInput>(null);
 
   return (
     <View style={{ position: "relative", zIndex: isFocused ? 1000 : 1 }}>
@@ -109,7 +141,7 @@ const AutocompleteInput: React.FC<{
           }, 200);
         }}
         placeholder={placeholder}
-        placeholderTextColor="#666"
+        placeholderTextColor={COLORS.placeholder}
         style={style}
       />
       {isFocused && filteredSuggestions.length > 0 && (
@@ -120,10 +152,10 @@ const AutocompleteInput: React.FC<{
             left: 0,
             right: 0,
             marginTop: 4,
-            backgroundColor: "#1c1c1c",
+            backgroundColor: COLORS.background,
             borderRadius: 12,
             borderWidth: 1,
-            borderColor: "#333",
+            borderColor: COLORS.border,
             maxHeight: 200,
             zIndex: 1001,
             elevation: 5,
@@ -144,9 +176,7 @@ const AutocompleteInput: React.FC<{
             {filteredSuggestions.map((suggestion, index) => (
               <TouchableOpacity
                 key={index}
-                onPress={() => {
-                  handleSelect(suggestion);
-                }}
+                onPress={() => handleSelect(suggestion)}
                 activeOpacity={0.7}
                 style={{
                   padding: 12,
@@ -154,7 +184,7 @@ const AutocompleteInput: React.FC<{
                   borderBottomColor: "#222",
                 }}
               >
-                <Text style={{ color: "white", fontSize: 16 }}>{suggestion}</Text>
+                <Text style={{ color: COLORS.text, fontSize: 16 }}>{suggestion}</Text>
               </TouchableOpacity>
             ))}
           </ScrollView>
@@ -163,6 +193,126 @@ const AutocompleteInput: React.FC<{
     </View>
   );
 };
+
+const ImagePreview: React.FC<{
+  image: ImageInfo;
+  onRemove: () => void;
+}> = ({ image, onRemove }) => (
+  <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: "#222" }}>
+    <View style={{ position: "relative", width: 80, height: 80, borderRadius: 12, overflow: "hidden" }}>
+      <Image source={{ uri: image.uri }} style={{ width: "100%", height: "100%" }} resizeMode="cover" />
+      <Pressable
+        onPress={onRemove}
+        style={{
+          position: "absolute",
+          top: 4,
+          right: 4,
+          backgroundColor: COLORS.overlay,
+          borderRadius: 12,
+          width: 24,
+          height: 24,
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <Octicons name="x" size={12} color={COLORS.text} />
+      </Pressable>
+    </View>
+  </View>
+);
+
+const ImageAttachmentButton: React.FC<{
+  onPress: () => void;
+  position: "bottom-right" | "center-right";
+}> = ({ onPress, position }) => (
+  <Pressable
+    onPress={onPress}
+    style={({ pressed }) => ({
+      ...(position === "bottom-right" && { position: "absolute", bottom: 12, right: 12 }),
+      width: 32,
+      height: 32,
+      borderRadius: 8,
+      backgroundColor: pressed ? "#2a2a2a" : "#262626",
+      alignItems: "center",
+      justifyContent: "center",
+    })}
+  >
+    <Octicons name="image" size={18} color={COLORS.textSecondary} />
+  </Pressable>
+);
+
+const FormField: React.FC<{
+  label: string;
+  error?: string;
+  children: React.ReactNode;
+}> = ({ label, error, children }) => (
+  <View>
+    <Text style={{ color: COLORS.textSecondary, fontSize: 12, marginBottom: 8, textTransform: "uppercase" }}>
+      {label}
+    </Text>
+    {children}
+    {error ? <Text style={{ color: COLORS.borderError, fontSize: 12, marginTop: 4 }}>{error}</Text> : null}
+  </View>
+);
+
+const SuccessScreen: React.FC<{
+  onDismiss: () => void;
+}> = ({ onDismiss }) => (
+  <View
+    style={{
+      position: "absolute",
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: "black",
+      zIndex: 1000,
+      alignItems: "center",
+      justifyContent: "center",
+    }}
+  >
+    <View style={{ alignItems: "center" }}>
+      <View
+        style={{
+          width: 80,
+          height: 80,
+          borderRadius: 40,
+          backgroundColor: COLORS.background,
+          borderWidth: 2,
+          borderColor: COLORS.text,
+          alignItems: "center",
+          justifyContent: "center",
+          marginBottom: 16,
+        }}
+      >
+        <Octicons name="check" size={40} color={COLORS.text} />
+      </View>
+      <Text style={{ color: COLORS.text, fontSize: 24, fontWeight: "700", marginBottom: 8 }}>
+        Post created!
+      </Text>
+      <Text style={{ color: COLORS.textSecondary, fontSize: 16, marginBottom: 8 }}>Your question is now live</Text>
+      <Pressable
+        onPress={onDismiss}
+        style={({ pressed }) => ({
+          paddingHorizontal: 12,
+          paddingVertical: 8,
+          borderRadius: 12,
+          borderWidth: 1,
+          borderColor: pressed ? COLORS.border : "transparent",
+          backgroundColor: pressed ? COLORS.background : "transparent",
+          minWidth: 60,
+          alignItems: "center",
+          justifyContent: "center",
+        })}
+      >
+        <View style={{ alignItems: "center", justifyContent: "center" }}>
+          <Octicons name="arrow-left" size={24} color={COLORS.textSecondary} />
+          <Text style={{ color: COLORS.textSecondary, fontSize: 12, marginTop: 4, fontWeight: "500" }}>Back</Text>
+        </View>
+      </Pressable>
+    </View>
+  </View>
+);
 
 export default function CreatePostScreen() {
   const [title, setTitle] = React.useState("");
@@ -174,22 +324,18 @@ export default function CreatePostScreen() {
   const [leftImage, setLeftImage] = React.useState<ImageInfo | null>(null);
   const [rightImage, setRightImage] = React.useState<ImageInfo | null>(null);
   const [isAnonymous, setIsAnonymous] = React.useState(false);
-  const categoryInputRef = React.useRef<View>(null);
+  const [submitted, setSubmitted] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const [showSuccess, setShowSuccess] = React.useState(false);
 
-  const scrollToCategory = () => {
-    setTimeout(() => {
-      categoryInputRef.current?.measureLayout(
-        scrollViewRef.current as any,
-        (x, y, width, height) => {
-          scrollViewRef.current?.scrollTo({
-            y: Math.max(0, y - 100),
-            animated: true,
-          });
-        },
-        () => {}
-      );
-    }, 100);
-  };
+  const wasFocusedRef = React.useRef(false);
+  const showSuccessRef = React.useRef(false);
+  const categoryInputRef = React.useRef<View>(null);
+  const scrollViewRef = React.useRef<ScrollView>(null);
+  const titleInputRef = React.useRef<TextInput>(null);
+  const promptInputRef = React.useRef<TextInput>(null);
+  const leftChoiceInputRef = React.useRef<TextInput>(null);
+  const rightChoiceInputRef = React.useRef<TextInput>(null);
 
   const pickImage = async (setImage: (image: ImageInfo | null) => void) => {
     const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -215,36 +361,115 @@ export default function CreatePostScreen() {
     }
   };
 
-  const handleSubmit = () => {
-    if (!title || !prompt || !leftChoice || !rightChoice) {
+  const scrollToInput = React.useCallback((inputRef: React.RefObject<TextInput | null>) => {
+    setTimeout(() => {
+      inputRef.current?.measureLayout?.(
+        scrollViewRef.current as any,
+        (x: number, y: number) => {
+          scrollViewRef.current?.scrollTo({
+            y: Math.max(0, y - 150),
+            animated: true,
+          });
+        },
+        () => {}
+      );
+    }, 200);
+  }, []);
+
+  const scrollToCategory = React.useCallback(() => {
+    setTimeout(() => {
+      categoryInputRef.current?.measureLayout(
+        scrollViewRef.current as any,
+        (x, y, width, height) => {
+          scrollViewRef.current?.scrollTo({
+            y: Math.max(0, y - 100),
+            animated: true,
+          });
+        },
+        () => {}
+      );
+    }, 100);
+  }, []);
+
+  const resetForm = React.useCallback(() => {
+    setTitle(resetFormData.title);
+    setPrompt(resetFormData.prompt);
+    setLeftChoice(resetFormData.leftChoice);
+    setRightChoice(resetFormData.rightChoice);
+    setCategory(resetFormData.category);
+    setPromptImage(resetFormData.promptImage);
+    setLeftImage(resetFormData.leftImage);
+    setRightImage(resetFormData.rightImage);
+    setSubmitted(resetFormData.submitted);
+  }, []);
+
+  const titleOk = title.trim().length > 0;
+  const promptOk = prompt.trim().length > 0;
+  const leftChoiceOk = leftChoice.trim().length > 0;
+  const rightChoiceOk = rightChoice.trim().length > 0;
+  const formOk = titleOk && promptOk && leftChoiceOk && rightChoiceOk;
+
+  const showTitleError = submitted && !titleOk;
+  const showPromptError = submitted && !promptOk;
+  const showLeftChoiceError = submitted && !leftChoiceOk;
+  const showRightChoiceError = submitted && !rightChoiceOk;
+
+  const handleSubmit = React.useCallback(async () => {
+    setSubmitted(true);
+    Keyboard.dismiss();
+
+    if (!formOk) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       return;
     }
 
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-  };
+    try {
+      setBusy(true);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-  const scrollViewRef = React.useRef<ScrollView>(null);
-  const titleInputRef = React.useRef<TextInput>(null);
-  const promptInputRef = React.useRef<TextInput>(null);
-  const leftChoiceInputRef = React.useRef<TextInput>(null);
-  const rightChoiceInputRef = React.useRef<TextInput>(null);
+      await new Promise((resolve) => setTimeout(resolve, 500));
 
-  const scrollToInput = (inputRef: React.RefObject<any>) => {
-    setTimeout(() => {
-      if (inputRef.current) {
-        inputRef.current.measureLayout?.(
-          scrollViewRef.current as any,
-          (x: number, y: number) => {
-            scrollViewRef.current?.scrollTo({
-              y: Math.max(0, y - 150),
-              animated: true,
-            });
-          },
-          () => {}
-        );
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      resetForm();
+      setShowSuccess(true);
+    } catch {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+    } finally {
+      setBusy(false);
+    }
+  }, [formOk, resetForm]);
+
+  const handleDismissSuccess = React.useCallback(() => {
+    setShowSuccess(false);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, []);
+
+  React.useEffect(() => {
+    showSuccessRef.current = showSuccess;
+  }, [showSuccess]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      const wasFocused = wasFocusedRef.current;
+      wasFocusedRef.current = true;
+
+      if (!wasFocused && showSuccessRef.current) {
+        setShowSuccess(false);
       }
-    }, 200);
+
+      return () => {
+        wasFocusedRef.current = false;
+      };
+    }, [])
+  );
+
+  const inputStyle = {
+    backgroundColor: COLORS.background,
+    borderRadius: 12,
+    padding: 16,
+    color: COLORS.text,
+    fontSize: 16,
+    borderWidth: 1,
   };
 
   return (
@@ -253,11 +478,12 @@ export default function CreatePostScreen() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
     >
+      {showSuccess && <SuccessScreen onDismiss={handleDismissSuccess} />}
       <ScrollView
         ref={scrollViewRef}
         contentContainerStyle={{
           paddingTop: 90,
-          paddingBottom: 100,
+          paddingBottom: 24,
           paddingHorizontal: 24,
           gap: 20,
         }}
@@ -266,47 +492,34 @@ export default function CreatePostScreen() {
         showsVerticalScrollIndicator={false}
       >
         <View>
-          <Text style={{ color: "white", fontSize: 28, fontWeight: "800", marginBottom: 8 }}>
+          <Text style={{ color: COLORS.text, fontSize: 28, fontWeight: "800", marginBottom: 8 }}>
             Create Post
           </Text>
-          <Text style={{ color: "#aaa", fontSize: 14 }}>
-            Share your question and let others vote
-          </Text>
+          <Text style={{ color: COLORS.textSecondary, fontSize: 14 }}>Share your question and let others vote</Text>
         </View>
 
-        <View>
-          <Text style={{ color: "#aaa", fontSize: 12, marginBottom: 8, textTransform: "uppercase" }}>
-            Title
-          </Text>
+        <FormField label="Title" error={showTitleError ? "Title is required." : undefined}>
           <TextInput
             ref={titleInputRef}
             value={title}
             onChangeText={setTitle}
             onFocus={() => scrollToInput(titleInputRef)}
             placeholder="Give your post a title"
-            placeholderTextColor="#666"
+            placeholderTextColor={COLORS.placeholder}
             style={{
-              backgroundColor: "#1c1c1c",
-              borderRadius: 12,
-              padding: 16,
-              color: "white",
-              fontSize: 16,
-              borderWidth: 1,
-              borderColor: "#333",
+              ...inputStyle,
+              borderColor: showTitleError ? COLORS.borderError : COLORS.border,
             }}
           />
-        </View>
+        </FormField>
 
-        <View>
-          <Text style={{ color: "#aaa", fontSize: 12, marginBottom: 8, textTransform: "uppercase" }}>
-            Question / Prompt
-          </Text>
+        <FormField label="Question / Prompt" error={showPromptError ? "Prompt is required." : undefined}>
           <View
             style={{
-              backgroundColor: "#1c1c1c",
+              backgroundColor: COLORS.background,
               borderRadius: 12,
               borderWidth: 1,
-              borderColor: "#333",
+              borderColor: showPromptError ? COLORS.borderError : COLORS.border,
               overflow: "hidden",
             }}
           >
@@ -317,7 +530,7 @@ export default function CreatePostScreen() {
                 onChangeText={setPrompt}
                 onFocus={() => scrollToInput(promptInputRef)}
                 placeholder="What's your question?"
-                placeholderTextColor="#666"
+                placeholderTextColor={COLORS.placeholder}
                 multiline
                 numberOfLines={3}
                 textAlignVertical="top"
@@ -325,72 +538,27 @@ export default function CreatePostScreen() {
                   padding: 16,
                   paddingRight: 48,
                   paddingBottom: 48,
-                  color: "white",
+                  color: COLORS.text,
                   fontSize: 16,
                   minHeight: 100,
                 }}
               />
-              <Pressable
-                onPress={() => pickImage(setPromptImage)}
-                style={({ pressed }) => ({
-                  position: "absolute",
-                  bottom: 12,
-                  right: 12,
-                  width: 32,
-                  height: 32,
-                  borderRadius: 8,
-                  backgroundColor: pressed ? "#2a2a2a" : "#262626",
-                  alignItems: "center",
-                  justifyContent: "center",
-                })}
-              >
-                <Octicons name="image" size={18} color="#aaa" />
-              </Pressable>
+              <ImageAttachmentButton onPress={() => pickImage(setPromptImage)} position="bottom-right" />
             </View>
             {promptImage && (
-              <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: "#222" }}>
-                <View style={{ position: "relative", width: 80, height: 80, borderRadius: 12, overflow: "hidden" }}>
-                  <Image
-                    source={{ uri: promptImage.uri }}
-                    style={{ width: "100%", height: "100%", borderRadius: 12 }}
-                    resizeMode="cover"
-                  />
-                  <Pressable
-                    onPress={() => {
-                      setPromptImage(null);
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                    }}
-                    style={{
-                      position: "absolute",
-                      top: 4,
-                      right: 4,
-                      backgroundColor: "rgba(0, 0, 0, 0.7)",
-                      borderRadius: 12,
-                      width: 24,
-                      height: 24,
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    <Octicons name="x" size={12} color="white" />
-                  </Pressable>
-                </View>
-              </View>
+              <ImagePreview image={promptImage} onRemove={() => setPromptImage(null)} />
             )}
           </View>
-        </View>
+        </FormField>
 
         <View style={{ gap: 12 }}>
-          <View>
-            <Text style={{ color: "#aaa", fontSize: 12, marginBottom: 8, textTransform: "uppercase" }}>
-              Left Choice
-            </Text>
+          <FormField label="Left Choice" error={showLeftChoiceError ? "Left choice is required." : undefined}>
             <View
               style={{
-                backgroundColor: "#1c1c1c",
+                backgroundColor: COLORS.background,
                 borderRadius: 12,
                 borderWidth: 1,
-                borderColor: "#333",
+                borderColor: showLeftChoiceError ? COLORS.borderError : COLORS.border,
                 overflow: "hidden",
               }}
             >
@@ -401,11 +569,11 @@ export default function CreatePostScreen() {
                   onChangeText={setLeftChoice}
                   onFocus={() => scrollToInput(leftChoiceInputRef)}
                   placeholder="Option A"
-                  placeholderTextColor="#666"
+                  placeholderTextColor={COLORS.placeholder}
                   style={{
                     padding: 16,
                     paddingRight: 48,
-                    color: "white",
+                    color: COLORS.text,
                     fontSize: 16,
                   }}
                 />
@@ -419,64 +587,20 @@ export default function CreatePostScreen() {
                     alignItems: "center",
                   }}
                 >
-                  <Pressable
-                    onPress={() => pickImage(setLeftImage)}
-                    style={({ pressed }) => ({
-                      width: 32,
-                      height: 32,
-                      borderRadius: 8,
-                      backgroundColor: pressed ? "#2a2a2a" : "#262626",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    })}
-                  >
-                    <Octicons name="image" size={18} color="#aaa" />
-                  </Pressable>
+                  <ImageAttachmentButton onPress={() => pickImage(setLeftImage)} position="center-right" />
                 </View>
               </View>
-              {leftImage && (
-                <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: "#222" }}>
-                  <View style={{ position: "relative", width: 80, height: 80, borderRadius: 12, overflow: "hidden" }}>
-                    <Image
-                      source={{ uri: leftImage.uri }}
-                      style={{ width: "100%", height: "100%", borderRadius: 12 }}
-                      resizeMode="cover"
-                    />
-                    <Pressable
-                      onPress={() => {
-                        setLeftImage(null);
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      }}
-                      style={{
-                        position: "absolute",
-                        top: 4,
-                        right: 4,
-                        backgroundColor: "rgba(0, 0, 0, 0.7)",
-                        borderRadius: 12,
-                        width: 24,
-                        height: 24,
-                        alignItems: "center",
-                        justifyContent: "center",
-                      }}
-                    >
-                      <Octicons name="x" size={12} color="white" />
-                    </Pressable>
-                  </View>
-                </View>
-              )}
+              {leftImage && <ImagePreview image={leftImage} onRemove={() => setLeftImage(null)} />}
             </View>
-          </View>
+          </FormField>
 
-          <View>
-            <Text style={{ color: "#aaa", fontSize: 12, marginBottom: 8, textTransform: "uppercase" }}>
-              Right Choice
-            </Text>
+          <FormField label="Right Choice" error={showRightChoiceError ? "Right choice is required." : undefined}>
             <View
               style={{
-                backgroundColor: "#1c1c1c",
+                backgroundColor: COLORS.background,
                 borderRadius: 12,
                 borderWidth: 1,
-                borderColor: "#333",
+                borderColor: showRightChoiceError ? COLORS.borderError : COLORS.border,
                 overflow: "hidden",
               }}
             >
@@ -487,11 +611,11 @@ export default function CreatePostScreen() {
                   onChangeText={setRightChoice}
                   onFocus={() => scrollToInput(rightChoiceInputRef)}
                   placeholder="Option B"
-                  placeholderTextColor="#666"
+                  placeholderTextColor={COLORS.placeholder}
                   style={{
                     padding: 16,
                     paddingRight: 48,
-                    color: "white",
+                    color: COLORS.text,
                     fontSize: 16,
                   }}
                 />
@@ -505,76 +629,30 @@ export default function CreatePostScreen() {
                     alignItems: "center",
                   }}
                 >
-                  <Pressable
-                    onPress={() => pickImage(setRightImage)}
-                    style={({ pressed }) => ({
-                      width: 32,
-                      height: 32,
-                      borderRadius: 8,
-                      backgroundColor: pressed ? "#2a2a2a" : "#262626",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    })}
-                  >
-                    <Octicons name="image" size={18} color="#aaa" />
-                  </Pressable>
+                  <ImageAttachmentButton onPress={() => pickImage(setRightImage)} position="center-right" />
                 </View>
               </View>
-              {rightImage && (
-                <View style={{ padding: 12, borderTopWidth: 1, borderTopColor: "#222" }}>
-                  <View style={{ position: "relative", width: 80, height: 80, borderRadius: 12, overflow: "hidden" }}>
-                    <Image
-                      source={{ uri: rightImage.uri }}
-                      style={{ width: "100%", height: "100%", borderRadius: 12 }}
-                      resizeMode="cover"
-                    />
-                    <Pressable
-                      onPress={() => {
-                        setRightImage(null);
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      }}
-                      style={{
-                        position: "absolute",
-                        top: 4,
-                        right: 4,
-                        backgroundColor: "rgba(0, 0, 0, 0.7)",
-                        borderRadius: 12,
-                        width: 24,
-                        height: 24,
-                        alignItems: "center",
-                        justifyContent: "center",
-                      }}
-                    >
-                      <Octicons name="x" size={12} color="white" />
-                    </Pressable>
-                  </View>
-                </View>
-              )}
+              {rightImage && <ImagePreview image={rightImage} onRemove={() => setRightImage(null)} />}
             </View>
-          </View>
+          </FormField>
         </View>
 
-          <View ref={categoryInputRef}>
-            <Text style={{ color: "#aaa", fontSize: 12, marginBottom: 8, textTransform: "uppercase" }}>
-              Category (Optional)
-            </Text>
-            <AutocompleteInput
-              value={category}
-              onChangeText={setCategory}
-              placeholder="e.g., Style, Food, Career"
-              suggestions={SUGGESTED_CATEGORIES}
-              onFocus={scrollToCategory}
-              style={{
-                backgroundColor: "#1c1c1c",
-                borderRadius: 12,
-                padding: 16,
-                color: "white",
-                fontSize: 16,
-                borderWidth: 1,
-                borderColor: "#333",
-              }}
-            />
-          </View>
+        <View ref={categoryInputRef}>
+          <Text style={{ color: COLORS.textSecondary, fontSize: 12, marginBottom: 8, textTransform: "uppercase" }}>
+            Category (Optional)
+          </Text>
+          <AutocompleteInput
+            value={category}
+            onChangeText={setCategory}
+            placeholder="e.g., Style, Food, Career"
+            suggestions={SUGGESTED_CATEGORIES}
+            onFocus={scrollToCategory}
+            style={{
+              ...inputStyle,
+              borderColor: COLORS.border,
+            }}
+          />
+        </View>
 
         <Pressable
           onPress={() => {
@@ -594,41 +672,45 @@ export default function CreatePostScreen() {
               height: 20,
               borderRadius: 5,
               borderWidth: 2,
-              borderColor: isAnonymous ? "#fff" : "#666",
-              backgroundColor: isAnonymous ? "#fff" : "transparent",
+              borderColor: isAnonymous ? COLORS.text : COLORS.textSecondary,
+              backgroundColor: isAnonymous ? COLORS.text : "transparent",
               alignItems: "center",
               justifyContent: "center",
             }}
           >
-            {isAnonymous && (
-              <Octicons name="check" size={14} color="black" />
-            )}
+            {isAnonymous && <Octicons name="check" size={14} color="black" />}
           </View>
-          <Text style={{ color: "#aaa", fontSize: 12, textTransform: "uppercase" }}>Post Anonymously</Text>
+          <Text style={{ color: COLORS.textSecondary, fontSize: 12, textTransform: "uppercase" }}>
+            Post Anonymously
+          </Text>
         </Pressable>
 
         <Pressable
           onPress={handleSubmit}
+          disabled={busy || !formOk}
           style={({ pressed }) => ({
-            backgroundColor: pressed ? "#333" : "#fff",
+            backgroundColor: pressed ? "#2a2a2a" : formOk ? "#fff" : COLORS.background,
             borderRadius: 12,
             padding: 16,
             alignItems: "center",
             justifyContent: "center",
             marginTop: 8,
+            borderWidth: 1,
+            borderColor: formOk ? "transparent" : COLORS.border,
+            opacity: busy || !formOk ? 0.5 : 1,
           })}
         >
           <Text
             style={{
-              color: "black",
+              color: formOk ? "black" : COLORS.textSecondary,
               fontSize: 16,
               fontWeight: "700",
             }}
           >
-            Create Post
+            {busy ? "Creating..." : "Create Post"}
           </Text>
-          </Pressable>
-        </ScrollView>
+        </Pressable>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
