@@ -301,11 +301,13 @@ const ChoiceOption: React.FC<{
 
 export default function HomeScreen() {
   const [index, setIndex] = React.useState(0);
+  const [displayIndex, setDisplayIndex] = React.useState(0);
   const [questions, setQuestions] = React.useState(SAMPLE_QUESTIONS);
-  const question = questions[index] ?? null;
+  const question = questions[displayIndex] ?? null;
   const [swipeProgress, setSwipeProgress] = React.useState(0);
   const [swipeDirection, setSwipeDirection] = React.useState<"left" | "right" | null>(null);
   const [voteHistory, setVoteHistory] = React.useState<VoteHistoryItem[]>([]);
+  const [cardOpacity, setCardOpacity] = React.useState(1);
 
   const position = React.useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const entryScale = React.useRef(new Animated.Value(1)).current;
@@ -358,13 +360,20 @@ export default function HomeScreen() {
         recordVote(direction);
       }
 
-      position.setValue({ x: 0, y: 0 });
-      setIndex((i) => {
-        const nextIdx = i + 1;
-        return nextIdx >= questions.length ? 0 : nextIdx;
-      });
+      const nextIdx = (displayIndex + 1) >= questions.length ? 0 : displayIndex + 1;
+      
+      setSwipeProgress(0);
+      setSwipeDirection(null);
+      setCardOpacity(0);
+      
+      setDisplayIndex(nextIdx);
+      setIndex(nextIdx);
+      
+      setTimeout(() => {
+        position.setValue({ x: 0, y: 0 });
+      }, 0);
     },
-    [position, questions.length, recordVote]
+    [position, questions.length, recordVote, displayIndex]
   );
 
   const skip = React.useCallback(() => {
@@ -395,10 +404,12 @@ export default function HomeScreen() {
     });
 
     setVoteHistory((prev) => prev.slice(0, -1));
+    setDisplayIndex(previousIndex);
     setIndex(previousIndex);
     position.setValue({ x: 0, y: 0 });
     setSwipeProgress(0);
     setSwipeDirection(null);
+    setCardOpacity(1);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   }, [voteHistory, position]);
 
@@ -414,7 +425,9 @@ export default function HomeScreen() {
         toValue: { x, y: 0 },
         duration: 200,
         useNativeDriver: false,
-      }).start(() => advance(direction));
+      }).start(() => {
+        advance(direction);
+      });
     },
     [position, advance]
   );
@@ -454,19 +467,30 @@ export default function HomeScreen() {
 
   React.useEffect(() => {
     entryScale.setValue(0.98);
-    Animated.spring(entryScale, {
-      toValue: 1,
-      tension: 50,
-      friction: 7,
-      useNativeDriver: false,
-    }).start();
-  }, [index, entryScale]);
+    setCardOpacity(0);
+    
+    requestAnimationFrame(() => {
+      setCardOpacity(1);
+      Animated.spring(entryScale, {
+        toValue: 1,
+        tension: 50,
+        friction: 7,
+        useNativeDriver: false,
+      }).start();
+    });
+  }, [displayIndex, entryScale]);
 
   React.useEffect(() => {
     const listenerId = position.x.addListener(({ value }) => {
       const absDx = Math.abs(value);
       const progress = Math.min(absDx / SWIPE_THRESHOLD, 1);
       setSwipeProgress(progress);
+
+      if (absDx >= SWIPE_OUT_DISTANCE * 0.8) {
+        setCardOpacity(0);
+      } else if (absDx < SWIPE_OUT_DISTANCE * 0.1) {
+        setCardOpacity(1);
+      }
 
       if (value < -HORIZONTAL_ACTIVATION_DX) {
         setSwipeDirection("left");
@@ -480,7 +504,7 @@ export default function HomeScreen() {
     return () => {
       position.x.removeListener(listenerId);
     };
-  }, [index, position.x]);
+  }, [displayIndex, position.x]);
 
   if (!question) {
     return (
@@ -567,6 +591,7 @@ export default function HomeScreen() {
 
       <View style={{ flex: 1, justifyContent: "center" }}>
         <Animated.View
+          key={`${question.id}-${displayIndex}`}
           {...panResponder.panHandlers}
           style={[
             {
@@ -575,6 +600,7 @@ export default function HomeScreen() {
               borderColor: "#333",
               backgroundColor: "#0f0f0f",
               overflow: "hidden",
+              opacity: cardOpacity,
             },
             cardStyle,
             { transform: [...cardStyle.transform, { scale: entryScale }] },
