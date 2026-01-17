@@ -171,14 +171,14 @@ const VoteDisplay: React.FC<{
   percentage: number;
   votes: number;
   isSelected: boolean;
-  showProgress: boolean;
+  swipeProgress: number;
   align: "left" | "right";
-}> = ({ percentage, votes, isSelected, showProgress, align }) => (
+}> = ({ percentage, votes, isSelected, swipeProgress, align }) => (
   <View
     style={{
       alignItems: align === "right" ? "flex-end" : "flex-start",
       minWidth: 65,
-      opacity: showProgress ? 1 : 0,
+      opacity: swipeProgress,
     }}
   >
     <Text
@@ -188,7 +188,7 @@ const VoteDisplay: React.FC<{
         fontWeight: "600",
       }}
     >
-      {showProgress ? `${Math.round(percentage)}%` : "0%"}
+      {swipeProgress > 0 ? `${Math.round(percentage)}%` : "0%"}
     </Text>
     <Text
       style={{
@@ -289,7 +289,7 @@ const ChoiceOption: React.FC<{
               percentage={percentage}
               votes={votes}
               isSelected={isSelected}
-              showProgress={swipeProgress > 0}
+              swipeProgress={swipeProgress}
               align={isRight ? "left" : "right"}
             />
           </View>
@@ -324,7 +324,10 @@ export default function HomeScreen() {
       toValue: { x: 0, y: 0 },
       useNativeDriver: false,
       friction: 6,
-    }).start();
+    }).start(() => {
+      setSwipeProgress(0);
+      setSwipeDirection(null);
+    });
   }, [position]);
 
   const recordVote = React.useCallback(
@@ -439,15 +442,11 @@ export default function HomeScreen() {
             forceSwipe("left");
           } else {
             resetCard();
-            setSwipeProgress(0);
-            setSwipeDirection(null);
           }
         },
 
         onPanResponderTerminate: () => {
           resetCard();
-          setSwipeProgress(0);
-          setSwipeDirection(null);
         },
       }),
     [resetCard, forceSwipe, position]
@@ -492,9 +491,54 @@ export default function HomeScreen() {
   }
 
   const currentVotes = question.votes ?? { left: 0, right: 0 };
-  const totalVotes = currentVotes.left + currentVotes.right;
-  const leftPercentage = calculatePercentage(currentVotes.left, totalVotes);
-  const rightPercentage = calculatePercentage(currentVotes.right, totalVotes);
+  const currentTotal = currentVotes.left + currentVotes.right;
+  
+  const previewVotes = {
+    left: swipeDirection === "left" ? currentVotes.left + 1 : currentVotes.left,
+    right: swipeDirection === "right" ? currentVotes.right + 1 : currentVotes.right,
+  };
+  
+  const totalPreviewVotes = previewVotes.left + previewVotes.right;
+  
+  const getNormalizedPercentages = (leftVotes: number, rightVotes: number, total: number) => {
+    if (total === 0) return { left: 0, right: 0 };
+    
+    const left = calculatePercentage(leftVotes, total);
+    const right = calculatePercentage(rightVotes, total);
+    const leftRounded = Math.round(left);
+    const rightRounded = Math.round(right);
+    const sum = leftRounded + rightRounded;
+    
+    if (sum !== 100) {
+      if (leftRounded >= rightRounded) {
+        return { left: leftRounded + (100 - sum), right: rightRounded };
+      } else {
+        return { left: leftRounded, right: rightRounded + (100 - sum) };
+      }
+    }
+    return { left: leftRounded, right: rightRounded };
+  };
+  
+  let leftPercentage: number;
+  let rightPercentage: number;
+  
+  if (swipeProgress > 0 && swipeDirection === "left") {
+    const percentages = getNormalizedPercentages(previewVotes.left, previewVotes.right, totalPreviewVotes);
+    leftPercentage = percentages.left;
+    rightPercentage = percentages.right;
+  } else if (swipeProgress > 0 && swipeDirection === "right") {
+    const percentages = getNormalizedPercentages(previewVotes.left, previewVotes.right, totalPreviewVotes);
+    leftPercentage = percentages.left;
+    rightPercentage = percentages.right;
+  } else {
+    const percentages = getNormalizedPercentages(currentVotes.left, currentVotes.right, currentTotal);
+    leftPercentage = percentages.left;
+    rightPercentage = percentages.right;
+  }
+  
+  const leftVotes = swipeProgress > 0 && swipeDirection === "left" ? previewVotes.left : currentVotes.left;
+  const rightVotes = swipeProgress > 0 && swipeDirection === "right" ? previewVotes.right : currentVotes.right;
+  
   const leftHighlight = swipeDirection === "left" ? swipeProgress : 0;
   const rightHighlight = swipeDirection === "right" ? swipeProgress : 0;
 
@@ -566,7 +610,7 @@ export default function HomeScreen() {
               choice={question.left}
               direction="left"
               percentage={leftPercentage}
-              votes={currentVotes.left}
+              votes={leftVotes}
               swipeProgress={swipeProgress}
               swipeDirection={swipeDirection}
               isSelected={swipeDirection === "left"}
@@ -577,7 +621,7 @@ export default function HomeScreen() {
               choice={question.right}
               direction="right"
               percentage={rightPercentage}
-              votes={currentVotes.right}
+              votes={rightVotes}
               swipeProgress={swipeProgress}
               swipeDirection={swipeDirection}
               isSelected={swipeDirection === "right"}
