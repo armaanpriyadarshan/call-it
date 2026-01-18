@@ -415,16 +415,16 @@ export default function HomeScreen() {
 
   const forceSwipe = React.useCallback(
     (direction: "left" | "right") => {
-      const x = direction === "right" ? SWIPE_OUT_DISTANCE : -SWIPE_OUT_DISTANCE;
+    const x = direction === "right" ? SWIPE_OUT_DISTANCE : -SWIPE_OUT_DISTANCE;
 
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       setSwipeProgress(0);
       setSwipeDirection(null);
 
-      Animated.timing(position, {
-        toValue: { x, y: 0 },
+    Animated.timing(position, {
+      toValue: { x, y: 0 },
         duration: 200,
-        useNativeDriver: false,
+      useNativeDriver: false,
       }).start(() => {
         advance(direction);
       });
@@ -472,11 +472,11 @@ export default function HomeScreen() {
     requestAnimationFrame(() => {
       setCardOpacity(1);
       Animated.spring(entryScale, {
-        toValue: 1,
+      toValue: 1,
         tension: 50,
         friction: 7,
-        useNativeDriver: false,
-      }).start();
+      useNativeDriver: false,
+    }).start();
     });
   }, [displayIndex, entryScale]);
 
@@ -590,48 +590,48 @@ export default function HomeScreen() {
       </View>
 
       <View style={{ flex: 1, justifyContent: "center" }}>
-        <Animated.View
+          <Animated.View
           key={`${question.id}-${displayIndex}`}
-          {...panResponder.panHandlers}
-          style={[
-            {
-              borderRadius: 24,
-              borderWidth: 1,
-              borderColor: "#333",
-              backgroundColor: "#0f0f0f",
-              overflow: "hidden",
+            {...panResponder.panHandlers}
+            style={[
+              {
+                borderRadius: 24,
+                borderWidth: 1,
+                borderColor: "#333",
+                backgroundColor: "#0f0f0f",
+                overflow: "hidden",
               opacity: cardOpacity,
-            },
-            cardStyle,
-            { transform: [...cardStyle.transform, { scale: entryScale }] },
-          ]}
-        >
-          <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: "#222" }}>
-            <Text style={{ color: "#aaa", fontSize: 12 }}>
-              {question.meta?.category ?? "General"}
-              {question.meta?.createdBy ? ` • ${question.meta.createdBy}` : ""}
-            </Text>
-            <Text style={{ color: "white", fontSize: 20, fontWeight: "800", marginTop: 6 }}>
-              {question.title}
-            </Text>
-          </View>
-
-          <ScrollView
-            style={{ maxHeight: 260 }}
-            contentContainerStyle={{ padding: 16, gap: 12 }}
-            nestedScrollEnabled
+              },
+              cardStyle,
+              { transform: [...cardStyle.transform, { scale: entryScale }] },
+            ]}
           >
+            <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: "#222" }}>
+              <Text style={{ color: "#aaa", fontSize: 12 }}>
+                {question.meta?.category ?? "General"}
+                {question.meta?.createdBy ? ` • ${question.meta.createdBy}` : ""}
+              </Text>
+              <Text style={{ color: "white", fontSize: 20, fontWeight: "800", marginTop: 6 }}>
+                {question.title}
+              </Text>
+            </View>
+
+            <ScrollView
+              style={{ maxHeight: 260 }}
+              contentContainerStyle={{ padding: 16, gap: 12 }}
+              nestedScrollEnabled
+            >
             <Text style={{ color: "white", fontSize: 16, lineHeight: 22 }}>{question.prompt}</Text>
 
-            {question.promptImageUrl && (
-              <Image
-                source={{ uri: question.promptImageUrl }}
-                style={{ width: "100%", height: 180, borderRadius: 16 }}
-              />
-            )}
-          </ScrollView>
+              {question.promptImageUrl && (
+                <Image
+                  source={{ uri: question.promptImageUrl }}
+                  style={{ width: "100%", height: 180, borderRadius: 16 }}
+                />
+              )}
+            </ScrollView>
 
-          <View style={{ padding: 16, gap: 12, borderTopWidth: 1, borderTopColor: "#222" }}>
+            <View style={{ padding: 16, gap: 12, borderTopWidth: 1, borderTopColor: "#222" }}>
             <ChoiceOption
               choice={question.left}
               direction="left"
@@ -654,11 +654,11 @@ export default function HomeScreen() {
               highlight={rightHighlight}
             />
 
-            <Text style={{ color: "#777", fontSize: 12 }}>
-              Tip: Scroll vertically in the prompt. Swipe left or right to pick.
-            </Text>
-          </View>
-        </Animated.View>
+              <Text style={{ color: "#777", fontSize: 12 }}>
+                Tip: Scroll vertically in the prompt. Swipe left or right to pick.
+              </Text>
+            </View>
+          </Animated.View>
       </View>
     </View>
   );
