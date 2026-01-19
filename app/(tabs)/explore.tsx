@@ -513,8 +513,6 @@ export default function ExploreScreen() {
 
   const position = React.useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const entryScale = React.useRef(new Animated.Value(1)).current;
-  const flatListRef = React.useRef<FlatList>(null);
-  const scrollOffsetRef = React.useRef(0);
 
   const handleCardPress = React.useCallback(
     (question: Question) => {
@@ -702,22 +700,6 @@ export default function ExploreScreen() {
     [resetCard, forceSwipe, position, handleBackToList]
   );
 
-  const listPanResponder = React.useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => false,
-        onMoveShouldSetPanResponder: () => {
-          if (flatListRef.current) {
-            flatListRef.current.scrollToOffset({
-              offset: scrollOffsetRef.current,
-              animated: false,
-            });
-          }
-          return false;
-        },
-      }),
-    []
-  );
 
   const filteredQuestions = React.useMemo(() => {
     if (!searchQuery.trim()) return questions;
@@ -892,7 +874,7 @@ export default function ExploreScreen() {
   }
 
   return (
-    <View style={{ flex: 1, backgroundColor: "black" }} {...listPanResponder.panHandlers}>
+    <View style={{ flex: 1, backgroundColor: "black" }}>
       <View
         style={{
           paddingTop: 60,
@@ -907,7 +889,6 @@ export default function ExploreScreen() {
       </View>
 
       <FlatList
-        ref={flatListRef}
         data={filteredQuestions}
         keyExtractor={(item) => item.id}
         renderItem={({ item }) => <QuestionCard question={item} onPress={() => handleCardPress(item)} />}
@@ -915,10 +896,6 @@ export default function ExploreScreen() {
           padding: 16,
         }}
         showsVerticalScrollIndicator={false}
-        onScroll={(event) => {
-          scrollOffsetRef.current = event.nativeEvent.contentOffset.y;
-        }}
-        scrollEventThrottle={16}
       />
     </View>
   );
