@@ -300,9 +300,9 @@ const ChoiceOption: React.FC<{
 };
 
 export default function HomeScreen() {
+  const [questions, setQuestions] = React.useState(SAMPLE_QUESTIONS);
   const [index, setIndex] = React.useState(0);
   const [displayIndex, setDisplayIndex] = React.useState(0);
-  const [questions, setQuestions] = React.useState(SAMPLE_QUESTIONS);
   const question = questions[displayIndex] ?? null;
   const [swipeProgress, setSwipeProgress] = React.useState(0);
   const [swipeDirection, setSwipeDirection] = React.useState<"left" | "right" | null>(null);
@@ -364,16 +364,14 @@ export default function HomeScreen() {
       
       setSwipeProgress(0);
       setSwipeDirection(null);
-      setCardOpacity(0);
+      setCardOpacity(0); // Hide old card immediately
       
+      // Update displayIndex immediately - the old card is already hidden by opacity
+      // The useEffect will handle resetting position and animating in the new card
       setDisplayIndex(nextIdx);
       setIndex(nextIdx);
-      
-      setTimeout(() => {
-        position.setValue({ x: 0, y: 0 });
-      }, 0);
     },
-    [position, questions.length, recordVote, displayIndex]
+    [questions.length, recordVote, displayIndex]
   );
 
   const skip = React.useCallback(() => {
@@ -466,19 +464,23 @@ export default function HomeScreen() {
   );
 
   React.useEffect(() => {
+    // This effect runs when displayIndex changes, animating in the new card
+    // Reset position first to ensure the new card starts at center
+    position.setValue({ x: 0, y: 0 });
     entryScale.setValue(0.98);
     setCardOpacity(0);
     
+    // Animate in the new card
     requestAnimationFrame(() => {
       setCardOpacity(1);
       Animated.spring(entryScale, {
-      toValue: 1,
+        toValue: 1,
         tension: 50,
         friction: 7,
-      useNativeDriver: false,
-    }).start();
+        useNativeDriver: false,
+      }).start();
     });
-  }, [displayIndex, entryScale]);
+  }, [displayIndex, entryScale, position]);
 
   React.useEffect(() => {
     const listenerId = position.x.addListener(({ value }) => {
