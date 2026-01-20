@@ -147,6 +147,7 @@ const SWIPE_THRESHOLD = 0.25 * SCREEN_W;
 const SWIPE_OUT_DISTANCE = 1.2 * SCREEN_W;
 const HORIZONTAL_ACTIVATION_DX = 8;
 const LEFT_EDGE_THRESHOLD = 50;
+const MAX_RECENT_SEARCHES = 10;
 
 const calculatePercentage = (votes: number, total: number) => (total > 0 ? (votes / total) * 100 : 0);
 
@@ -160,12 +161,51 @@ const getNormalizedPercentages = (leftVotes: number, rightVotes: number, total: 
   const sum = leftRounded + rightRounded;
 
   if (sum !== 100) {
-    if (leftRounded >= rightRounded) {
-      return { left: leftRounded + (100 - sum), right: rightRounded };
-    }
-    return { left: leftRounded, right: rightRounded + (100 - sum) };
+    return leftRounded >= rightRounded
+      ? { left: leftRounded + (100 - sum), right: rightRounded }
+      : { left: leftRounded, right: rightRounded + (100 - sum) };
   }
   return { left: leftRounded, right: rightRounded };
+};
+
+const calculateVoteData = (
+  question: Question | null,
+  swipeProgress: number,
+  swipeDirection: "left" | "right" | null
+) => {
+  if (!question) {
+    return {
+      leftPercentage: 0,
+      rightPercentage: 0,
+      leftVotes: 0,
+      rightVotes: 0,
+      leftHighlight: 0,
+      rightHighlight: 0,
+    };
+  }
+
+  const currentVotes = question.votes ?? { left: 0, right: 0 };
+  const currentTotal = currentVotes.left + currentVotes.right;
+
+  const previewVotes = {
+    left: swipeDirection === "left" ? currentVotes.left + 1 : currentVotes.left,
+    right: swipeDirection === "right" ? currentVotes.right + 1 : currentVotes.right,
+  };
+  const totalPreviewVotes = previewVotes.left + previewVotes.right;
+
+  const percentages =
+    swipeProgress > 0 && swipeDirection
+      ? getNormalizedPercentages(previewVotes.left, previewVotes.right, totalPreviewVotes)
+      : getNormalizedPercentages(currentVotes.left, currentVotes.right, currentTotal);
+
+  return {
+    leftPercentage: percentages.left,
+    rightPercentage: percentages.right,
+    leftVotes: swipeProgress > 0 && swipeDirection === "left" ? previewVotes.left : currentVotes.left,
+    rightVotes: swipeProgress > 0 && swipeDirection === "right" ? previewVotes.right : currentVotes.right,
+    leftHighlight: swipeDirection === "left" ? swipeProgress : 0,
+    rightHighlight: swipeDirection === "right" ? swipeProgress : 0,
+  };
 };
 
 const ActionButton: React.FC<{
@@ -414,7 +454,11 @@ const QuestionCard: React.FC<{ question: Question; onPress: () => void }> = ({ q
 const SearchBar: React.FC<{
   value: string;
   onChangeText: (text: string) => void;
-}> = ({ value, onChangeText }) => (
+  onClear: () => void;
+  onFocus: () => void;
+  onBlur: () => void;
+  onSubmitEditing: () => void;
+}> = ({ value, onChangeText, onClear, onFocus, onBlur, onSubmitEditing }) => (
   <View
     style={{
       flexDirection: "row",
@@ -431,6 +475,9 @@ const SearchBar: React.FC<{
     <TextInput
       value={value}
       onChangeText={onChangeText}
+      onFocus={onFocus}
+      onBlur={onBlur}
+      onSubmitEditing={onSubmitEditing}
       placeholder="Search questions"
       placeholderTextColor="#666"
       style={{
@@ -440,67 +487,79 @@ const SearchBar: React.FC<{
       }}
     />
     {value.length > 0 && (
-      <Pressable onPress={() => onChangeText("")}>
+      <Pressable onPress={onClear}>
         <Octicons name="x" size={18} color="#666" />
       </Pressable>
     )}
   </View>
 );
 
-const calculateVoteData = (
-  question: Question | null,
-  swipeProgress: number,
-  swipeDirection: "left" | "right" | null
-) => {
-  if (!question) {
-    return {
-      leftPercentage: 0,
-      rightPercentage: 0,
-      leftVotes: 0,
-      rightVotes: 0,
-      leftHighlight: 0,
-      rightHighlight: 0,
-    };
-  }
+const RecentSearchItem: React.FC<{
+  query: string;
+  onPress: () => void;
+  onDelete: () => void;
+}> = ({ query, onPress, onDelete }) => (
+  <View
+    style={{
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: "#222",
+    }}
+  >
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => ({
+        flexDirection: "row",
+        alignItems: "center",
+        flex: 1,
+        opacity: pressed ? 0.6 : 1,
+      })}
+    >
+      <Octicons name="clock" size={18} color="#666" style={{ marginRight: 12 }} />
+      <Text style={{ color: "white", fontSize: 16, flex: 1 }}>{query}</Text>
+    </Pressable>
+    <Pressable
+      onPress={onDelete}
+      hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
+      style={({ pressed }) => ({
+        padding: 8,
+        opacity: pressed ? 0.6 : 1,
+      })}
+    >
+      <Octicons name="x" size={18} color="#666" />
+    </Pressable>
+  </View>
+);
 
-  const currentVotes = question.votes ?? { left: 0, right: 0 };
-  const currentTotal = currentVotes.left + currentVotes.right;
-
-  const previewVotes = {
-    left: swipeDirection === "left" ? currentVotes.left + 1 : currentVotes.left,
-    right: swipeDirection === "right" ? currentVotes.right + 1 : currentVotes.right,
-  };
-
-  const totalPreviewVotes = previewVotes.left + previewVotes.right;
-
-  let leftPercentage = 0;
-  let rightPercentage = 0;
-
-  if (swipeProgress > 0 && swipeDirection) {
-    const percentages = getNormalizedPercentages(previewVotes.left, previewVotes.right, totalPreviewVotes);
-    leftPercentage = percentages.left;
-    rightPercentage = percentages.right;
-  } else {
-    const percentages = getNormalizedPercentages(currentVotes.left, currentVotes.right, currentTotal);
-    leftPercentage = percentages.left;
-    rightPercentage = percentages.right;
-  }
-
-  const leftVotes = swipeProgress > 0 && swipeDirection === "left" ? previewVotes.left : currentVotes.left;
-  const rightVotes = swipeProgress > 0 && swipeDirection === "right" ? previewVotes.right : currentVotes.right;
-
-  return {
-    leftPercentage,
-    rightPercentage,
-    leftVotes,
-    rightVotes,
-    leftHighlight: swipeDirection === "left" ? swipeProgress : 0,
-    rightHighlight: swipeDirection === "right" ? swipeProgress : 0,
-  };
-};
+const AutocompleteItem: React.FC<{
+  suggestion: string;
+  onPress: () => void;
+}> = ({ suggestion, onPress }) => (
+  <Pressable
+    onPress={onPress}
+    style={{
+      flexDirection: "row",
+      alignItems: "center",
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      borderBottomWidth: 1,
+      borderBottomColor: "#222",
+    }}
+  >
+    <Octicons name="search" size={18} color="#666" style={{ marginRight: 12 }} />
+    <Text style={{ color: "white", fontSize: 16 }}>{suggestion}</Text>
+  </Pressable>
+);
 
 export default function ExploreScreen() {
   const [searchQuery, setSearchQuery] = React.useState("");
+  const [searchFocused, setSearchFocused] = React.useState(false);
+  const [performedSearch, setPerformedSearch] = React.useState("");
+  const [recentSearches, setRecentSearches] = React.useState<string[]>([]);
   const [questions, setQuestions] = React.useState(SAMPLE_QUESTIONS);
   const [viewMode, setViewMode] = React.useState<"list" | "card">("list");
   const [index, setIndex] = React.useState(0);
@@ -513,6 +572,32 @@ export default function ExploreScreen() {
 
   const position = React.useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const entryScale = React.useRef(new Animated.Value(1)).current;
+  const chevronWidth = React.useRef(new Animated.Value(0)).current;
+  const chevronOpacity = React.useRef(new Animated.Value(0)).current;
+  const blurTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearBlurTimeout = React.useCallback(() => {
+    if (blurTimeoutRef.current) {
+      clearTimeout(blurTimeoutRef.current);
+      blurTimeoutRef.current = null;
+    }
+  }, []);
+
+  const addToRecentSearches = React.useCallback((query: string) => {
+    setRecentSearches((prev) => {
+      const filtered = prev.filter((q) => q !== query);
+      return [query, ...filtered].slice(0, MAX_RECENT_SEARCHES);
+    });
+  }, []);
+
+  const rotate = position.x.interpolate({
+    inputRange: [-SCREEN_W, 0, SCREEN_W],
+    outputRange: ["-8deg", "0deg", "8deg"],
+  });
+
+  const cardStyle = {
+    transform: [{ translateX: position.x }, { rotate }],
+  };
 
   const handleCardPress = React.useCallback(
     (question: Question) => {
@@ -538,15 +623,6 @@ export default function ExploreScreen() {
     setSwipeDirection(null);
     position.setValue({ x: 0, y: 0 });
   }, [position]);
-
-  const rotate = position.x.interpolate({
-    inputRange: [-SCREEN_W, 0, SCREEN_W],
-    outputRange: ["-8deg", "0deg", "8deg"],
-  });
-
-  const cardStyle = {
-    transform: [{ translateX: position.x }, { rotate }],
-  };
 
   const resetCard = React.useCallback(() => {
     Animated.spring(position, {
@@ -700,11 +776,34 @@ export default function ExploreScreen() {
     [resetCard, forceSwipe, position, handleBackToList]
   );
 
-
-  const filteredQuestions = React.useMemo(() => {
-    if (!searchQuery.trim()) return questions;
+  const autocompleteSuggestions = React.useMemo(() => {
+    if (!searchQuery.trim() || searchQuery.length < 1) return [];
 
     const query = searchQuery.toLowerCase();
+    const suggestions = new Set<string>();
+
+    questions.forEach((q) => {
+      if (q.title.toLowerCase().includes(query)) {
+        suggestions.add(q.title);
+      }
+      if (q.meta?.category?.toLowerCase().includes(query)) {
+        suggestions.add(q.meta.category);
+      }
+      if (q.left.label.toLowerCase().includes(query)) {
+        suggestions.add(q.left.label);
+      }
+      if (q.right.label.toLowerCase().includes(query)) {
+        suggestions.add(q.right.label);
+      }
+    });
+
+    return Array.from(suggestions).slice(0, 5);
+  }, [searchQuery, questions]);
+
+  const filteredQuestions = React.useMemo(() => {
+    if (!performedSearch.trim()) return [];
+
+    const query = performedSearch.toLowerCase();
     return questions.filter(
       (q) =>
         q.title.toLowerCase().includes(query) ||
@@ -713,7 +812,122 @@ export default function ExploreScreen() {
         q.left.label.toLowerCase().includes(query) ||
         q.right.label.toLowerCase().includes(query)
     );
-  }, [searchQuery, questions]);
+  }, [performedSearch, questions]);
+
+  const handleSearchSubmit = React.useCallback(() => {
+    if (searchQuery.trim()) {
+      const trimmed = searchQuery.trim();
+      setPerformedSearch(trimmed);
+      if (!recentSearches.includes(trimmed)) {
+        addToRecentSearches(trimmed);
+      }
+      setSearchFocused(false);
+    }
+  }, [searchQuery, recentSearches, addToRecentSearches]);
+
+  const handleSearchClose = React.useCallback(() => {
+    clearBlurTimeout();
+
+    Animated.parallel([
+      Animated.timing(chevronWidth, {
+        toValue: 0,
+        duration: 150,
+        useNativeDriver: false,
+      }),
+      Animated.timing(chevronOpacity, {
+        toValue: 0,
+        duration: 150,
+        useNativeDriver: false,
+      }),
+    ]).start(() => {
+      setSearchFocused(false);
+    });
+  }, [chevronWidth, chevronOpacity, clearBlurTimeout]);
+
+  const handleSearchClear = React.useCallback(() => {
+    clearBlurTimeout();
+    setSearchQuery("");
+    setPerformedSearch("");
+    setSearchFocused(true);
+  }, [clearBlurTimeout]);
+
+  const handleSearchTextChange = React.useCallback(
+    (text: string) => {
+      setSearchQuery(text);
+      if (performedSearch && text.trim() !== performedSearch.trim()) {
+        setPerformedSearch("");
+        setSearchFocused(true);
+      }
+    },
+    [performedSearch]
+  );
+
+  const handleSearchFocus = React.useCallback(() => {
+    setSearchFocused(true);
+    if (performedSearch) {
+      setPerformedSearch("");
+    }
+
+    Animated.parallel([
+      Animated.timing(chevronWidth, {
+        toValue: 40,
+        duration: 200,
+        useNativeDriver: false,
+      }),
+      Animated.timing(chevronOpacity, {
+        toValue: 1,
+        duration: 200,
+        useNativeDriver: false,
+      }),
+    ]).start();
+  }, [performedSearch, chevronWidth, chevronOpacity]);
+
+  const handleSearchBlur = React.useCallback(() => {
+    clearBlurTimeout();
+    blurTimeoutRef.current = setTimeout(() => {
+      if (!searchQuery.trim() && !performedSearch) {
+        setSearchFocused(false);
+      }
+      blurTimeoutRef.current = null;
+    }, 200);
+  }, [searchQuery, performedSearch, clearBlurTimeout]);
+
+  const handleRecentSearchPress = React.useCallback(
+    (query: string) => {
+      const trimmed = query.trim();
+      if (!trimmed) return;
+
+      clearBlurTimeout();
+      setSearchQuery(trimmed);
+      setPerformedSearch(trimmed);
+      addToRecentSearches(trimmed);
+      setSearchFocused(false);
+    },
+    [clearBlurTimeout, addToRecentSearches]
+  );
+
+  const handleRecentSearchDelete = React.useCallback(
+    (query: string) => {
+      clearBlurTimeout();
+      setRecentSearches((prev) => prev.filter((q) => q !== query));
+      setSearchFocused(true);
+    },
+    [clearBlurTimeout]
+  );
+
+  const handleAutocompletePress = React.useCallback(
+    (suggestion: string) => {
+      const trimmed = suggestion.trim();
+      if (!trimmed) return;
+
+      clearBlurTimeout();
+      setSearchQuery(trimmed);
+      setPerformedSearch(trimmed);
+      addToRecentSearches(trimmed);
+      setSearchFocused(false);
+    },
+    [clearBlurTimeout, addToRecentSearches]
+  );
 
   React.useEffect(() => {
     if (viewMode === "card") {
@@ -873,6 +1087,114 @@ export default function ExploreScreen() {
     );
   }
 
+  if (searchFocused && !performedSearch) {
+    return (
+      <View style={{ flex: 1, backgroundColor: "black" }}>
+        <View
+          style={{
+            paddingTop: 60,
+            paddingBottom: 12,
+            paddingHorizontal: 16,
+            backgroundColor: "black",
+            borderBottomWidth: 1,
+            borderBottomColor: "#333",
+            flexDirection: "row",
+            alignItems: "center",
+          }}
+        >
+          <Animated.View
+            style={{
+              width: chevronWidth,
+              opacity: chevronOpacity,
+              overflow: "hidden",
+            }}
+          >
+            <Pressable
+              onPress={handleSearchClose}
+              style={({ pressed }) => ({
+                width: 40,
+                height: 40,
+                alignItems: "center",
+                justifyContent: "center",
+                opacity: pressed ? 0.6 : 1,
+              })}
+            >
+              <Octicons name="chevron-left" size={20} color="#aaa" />
+            </Pressable>
+          </Animated.View>
+          <Animated.View style={{ flex: 1 }}>
+            <SearchBar
+              value={searchQuery}
+              onChangeText={handleSearchTextChange}
+              onClear={handleSearchClear}
+              onFocus={handleSearchFocus}
+              onBlur={handleSearchBlur}
+              onSubmitEditing={handleSearchSubmit}
+            />
+          </Animated.View>
+        </View>
+
+        <View style={{ flex: 1, backgroundColor: "#0f0f0f" }}>
+          {searchQuery.trim().length === 0 ? (
+            <>
+              <View
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  paddingVertical: 12,
+                  paddingHorizontal: 16,
+                  borderBottomWidth: 1,
+                  borderBottomColor: "#222",
+                }}
+              >
+                <Text style={{ color: "#aaa", fontSize: 14, fontWeight: "600" }}>Recent</Text>
+                {recentSearches.length > 0 && (
+                  <Pressable onPress={() => setRecentSearches([])}>
+                    <Text style={{ color: "#666", fontSize: 14 }}>Clear all</Text>
+                  </Pressable>
+                )}
+              </View>
+              {recentSearches.length > 0 ? (
+                <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                  {recentSearches.map((item, idx) => (
+                    <RecentSearchItem
+                      key={`${item}-${idx}`}
+                      query={item}
+                      onPress={() => handleRecentSearchPress(item)}
+                      onDelete={() => handleRecentSearchDelete(item)}
+                    />
+                  ))}
+                </ScrollView>
+              ) : (
+                <View style={{ flex: 1, justifyContent: "center", alignItems: "center", padding: 24 }}>
+                  <Text style={{ color: "#666", fontSize: 14 }}>No recent searches</Text>
+                </View>
+              )}
+            </>
+          ) : (
+            <>
+              <View style={{ paddingVertical: 12, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: "#222" }}>
+                <Text style={{ color: "#aaa", fontSize: 14, fontWeight: "600" }}>Suggestions</Text>
+              </View>
+              {autocompleteSuggestions.length > 0 ? (
+                <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                  {autocompleteSuggestions.map((item, idx) => (
+                    <AutocompleteItem key={`${item}-${idx}`} suggestion={item} onPress={() => handleAutocompletePress(item)} />
+                  ))}
+                </ScrollView>
+              ) : (
+                <View style={{ flex: 1, justifyContent: "center", alignItems: "center", padding: 24 }}>
+                  <Text style={{ color: "#666", fontSize: 14 }}>No suggestions found</Text>
+                </View>
+              )}
+            </>
+          )}
+        </View>
+      </View>
+    );
+  }
+
   return (
     <View style={{ flex: 1, backgroundColor: "black" }}>
       <View
@@ -885,18 +1207,40 @@ export default function ExploreScreen() {
           borderBottomColor: "#333",
         }}
       >
-        <SearchBar value={searchQuery} onChangeText={setSearchQuery} />
+        <SearchBar
+          value={searchQuery}
+          onChangeText={handleSearchTextChange}
+          onClear={handleSearchClear}
+          onFocus={handleSearchFocus}
+          onBlur={handleSearchBlur}
+          onSubmitEditing={handleSearchSubmit}
+        />
       </View>
 
-      <FlatList
-        data={filteredQuestions}
-        keyExtractor={(item) => item.id}
-        renderItem={({ item }) => <QuestionCard question={item} onPress={() => handleCardPress(item)} />}
-        contentContainerStyle={{
-          padding: 16,
-        }}
-        showsVerticalScrollIndicator={false}
-      />
+      {performedSearch ? (
+        <FlatList
+          data={filteredQuestions}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => <QuestionCard question={item} onPress={() => handleCardPress(item)} />}
+          contentContainerStyle={{ padding: 16 }}
+          showsVerticalScrollIndicator={false}
+          ListEmptyComponent={
+            <View style={{ flex: 1, justifyContent: "center", alignItems: "center", padding: 24 }}>
+              <Text style={{ color: "#666", fontSize: 14 }}>
+                No results found for {'"' + performedSearch + '"'}
+              </Text>
+            </View>
+          }
+        />
+      ) : (
+        <FlatList
+          data={questions}
+          keyExtractor={(item) => item.id}
+          renderItem={({ item }) => <QuestionCard question={item} onPress={() => handleCardPress(item)} />}
+          contentContainerStyle={{ padding: 16 }}
+          showsVerticalScrollIndicator={false}
+        />
+      )}
     </View>
   );
 }
