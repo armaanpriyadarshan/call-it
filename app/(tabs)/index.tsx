@@ -474,11 +474,11 @@ export default function HomeScreen() {
     requestAnimationFrame(() => {
       setCardOpacity(1);
       Animated.spring(entryScale, {
-        toValue: 1,
+      toValue: 1,
         tension: 50,
         friction: 7,
-        useNativeDriver: false,
-      }).start();
+      useNativeDriver: false,
+    }).start();
     });
   }, [displayIndex, entryScale, position]);
 

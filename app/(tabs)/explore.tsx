@@ -1,3 +1,4 @@
+import { useExploreTabReset } from "@/contexts/explore-tab-context";
 import Octicons from "@expo/vector-icons/Octicons";
 import * as Haptics from "expo-haptics";
 import React from "react";
@@ -451,48 +452,54 @@ const QuestionCard: React.FC<{ question: Question; onPress: () => void }> = ({ q
   );
 };
 
-const SearchBar: React.FC<{
-  value: string;
-  onChangeText: (text: string) => void;
-  onClear: () => void;
-  onFocus: () => void;
-  onBlur: () => void;
-  onSubmitEditing: () => void;
-}> = ({ value, onChangeText, onClear, onFocus, onBlur, onSubmitEditing }) => (
-  <View
-    style={{
-      flexDirection: "row",
-      alignItems: "center",
-      backgroundColor: "#1c1c1c",
-      borderRadius: 12,
-      paddingHorizontal: 12,
-      paddingVertical: 10,
-      borderWidth: 1,
-      borderColor: "#333",
-    }}
-  >
-    <Octicons name="search" size={18} color="#666" style={{ marginRight: 8 }} />
-    <TextInput
-      value={value}
-      onChangeText={onChangeText}
-      onFocus={onFocus}
-      onBlur={onBlur}
-      onSubmitEditing={onSubmitEditing}
-      placeholder="Search questions"
-      placeholderTextColor="#666"
+const SearchBar = React.forwardRef<
+  TextInput,
+  {
+    value: string;
+    onChangeText: (text: string) => void;
+    onClear: () => void;
+    onFocus: () => void;
+    onBlur: () => void;
+    onSubmitEditing: () => void;
+  }
+>(function SearchBar({ value, onChangeText, onClear, onFocus, onBlur, onSubmitEditing }, ref) {
+  return (
+    <View
       style={{
-        flex: 1,
-        color: "white",
-        fontSize: 16,
+        flexDirection: "row",
+        alignItems: "center",
+        backgroundColor: "#1c1c1c",
+        borderRadius: 12,
+        paddingHorizontal: 12,
+        paddingVertical: 10,
+        borderWidth: 1,
+        borderColor: "#333",
       }}
-    />
-    {value.length > 0 && (
-      <Pressable onPress={onClear}>
-        <Octicons name="x" size={18} color="#666" />
-      </Pressable>
-    )}
-  </View>
-);
+    >
+      <Octicons name="search" size={18} color="#666" style={{ marginRight: 8 }} />
+      <TextInput
+        ref={ref}
+        value={value}
+        onChangeText={onChangeText}
+        onFocus={onFocus}
+        onBlur={onBlur}
+        onSubmitEditing={onSubmitEditing}
+        placeholder="Search questions"
+        placeholderTextColor="#666"
+        style={{
+          flex: 1,
+          color: "white",
+          fontSize: 16,
+        }}
+      />
+      {value.length > 0 && (
+        <Pressable onPress={onClear}>
+          <Octicons name="x" size={18} color="#666" />
+        </Pressable>
+      )}
+    </View>
+  );
+});
 
 const RecentSearchItem: React.FC<{
   query: string;
@@ -556,6 +563,8 @@ const AutocompleteItem: React.FC<{
 );
 
 export default function ExploreScreen() {
+  const { registerResetCallback, unregisterResetCallback } = useExploreTabReset();
+
   const [searchQuery, setSearchQuery] = React.useState("");
   const [searchFocused, setSearchFocused] = React.useState(false);
   const [performedSearch, setPerformedSearch] = React.useState("");
@@ -575,6 +584,7 @@ export default function ExploreScreen() {
   const chevronWidth = React.useRef(new Animated.Value(0)).current;
   const chevronOpacity = React.useRef(new Animated.Value(0)).current;
   const blurTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const focusedSearchInputRef = React.useRef<TextInput>(null);
 
   const clearBlurTimeout = React.useCallback(() => {
     if (blurTimeoutRef.current) {
@@ -975,6 +985,52 @@ export default function ExploreScreen() {
     };
   }, [displayIndex, position.x, viewMode]);
 
+  const viewModeRef = React.useRef(viewMode);
+  const searchFocusedRef = React.useRef(searchFocused);
+  const performedSearchRef = React.useRef(performedSearch);
+  const prevSearchFocusedRef = React.useRef(searchFocused);
+
+  React.useEffect(() => {
+    viewModeRef.current = viewMode;
+  }, [viewMode]);
+
+  React.useEffect(() => {
+    // Focus the search input when transitioning to focused state
+    if (searchFocused && !prevSearchFocusedRef.current) {
+      // Use requestAnimationFrame to ensure the new component is mounted
+      requestAnimationFrame(() => {
+        focusedSearchInputRef.current?.focus();
+      });
+    }
+    prevSearchFocusedRef.current = searchFocused;
+    searchFocusedRef.current = searchFocused;
+  }, [searchFocused]);
+
+  React.useEffect(() => {
+    performedSearchRef.current = performedSearch;
+  }, [performedSearch]);
+
+  const resetToRoot = React.useCallback(() => {
+    if (viewModeRef.current === "card") {
+      handleBackToList();
+      return true;
+    }
+    if (searchFocusedRef.current || performedSearchRef.current) {
+      setSearchQuery("");
+      setPerformedSearch("");
+      setSearchFocused(false);
+      chevronWidth.setValue(0);
+      chevronOpacity.setValue(0);
+      return true;
+    }
+    return false;
+  }, [handleBackToList, chevronWidth, chevronOpacity]);
+
+  React.useEffect(() => {
+    registerResetCallback(resetToRoot);
+    return () => unregisterResetCallback();
+  }, [registerResetCallback, unregisterResetCallback, resetToRoot]);
+
   if (viewMode === "card") {
     if (!question) {
       return (
@@ -1124,6 +1180,7 @@ export default function ExploreScreen() {
           </Animated.View>
           <Animated.View style={{ flex: 1 }}>
             <SearchBar
+              ref={focusedSearchInputRef}
               value={searchQuery}
               onChangeText={handleSearchTextChange}
               onClear={handleSearchClear}

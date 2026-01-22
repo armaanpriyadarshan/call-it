@@ -4,10 +4,12 @@ import React from 'react';
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
+import { ExploreTabProvider, useExploreTabReset } from '@/contexts/explore-tab-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
-export default function TabLayout() {
+function TabLayoutContent() {
   const colorScheme = useColorScheme();
+  const { triggerReset, setExploreTabActive } = useExploreTabReset();
 
   return (
     <Tabs
@@ -22,12 +24,30 @@ export default function TabLayout() {
           title: 'Home',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="house.fill" color={color} />,
         }}
+        listeners={{
+          focus: () => {
+            setExploreTabActive(false);
+          },
+        }}
       />
       <Tabs.Screen
         name="explore"
         options={{
           title: 'Explore',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="safari.fill" color={color} />,
+        }}
+        listeners={{
+          focus: () => {
+            setExploreTabActive(true);
+          },
+          blur: () => {
+            setExploreTabActive(false);
+          },
+          tabPress: (e) => {
+            if (triggerReset()) {
+              e.preventDefault();
+            }
+          },
         }}
       />
       <Tabs.Screen
@@ -36,6 +56,11 @@ export default function TabLayout() {
           title: 'Create',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="plus.circle.fill" color={color} />,
         }}
+        listeners={{
+          focus: () => {
+            setExploreTabActive(false);
+          },
+        }}
       />
       <Tabs.Screen
         name="profile"
@@ -43,7 +68,20 @@ export default function TabLayout() {
           title: 'Profile',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="person.fill" color={color} />,
         }}
+        listeners={{
+          focus: () => {
+            setExploreTabActive(false);
+          },
+        }}
       />
     </Tabs>
+  );
+}
+
+export default function TabLayout() {
+  return (
+    <ExploreTabProvider>
+      <TabLayoutContent />
+    </ExploreTabProvider>
   );
 }
