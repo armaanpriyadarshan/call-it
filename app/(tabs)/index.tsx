@@ -1,5 +1,6 @@
 import Octicons from "@expo/vector-icons/Octicons";
 import * as Haptics from "expo-haptics";
+import { useRouter } from "expo-router";
 import React from "react";
 import {
   Animated,
@@ -57,7 +58,7 @@ const SAMPLE_QUESTIONS: Question[] = [
       imageUrl: "https://images.unsplash.com/photo-1595777457583-95e059d581b8?w=400&h=400&fit=crop",
     },
     votes: { left: 12, right: 8 },
-    meta: { category: "Style", createdBy: "Anonymous" },
+    meta: { category: "Style", createdBy: "fashionista" },
   },
   {
     id: "q2",
@@ -75,7 +76,7 @@ const SAMPLE_QUESTIONS: Question[] = [
     left: { id: "left", label: "Option A (brand)" },
     right: { id: "right", label: "Option B (growth)" },
     votes: { left: 7, right: 15 },
-    meta: { category: "Career", createdBy: "Anonymous" },
+    meta: { category: "Career", createdBy: "careercoach" },
   },
   {
     id: "q4",
@@ -92,7 +93,7 @@ const SAMPLE_QUESTIONS: Question[] = [
       imageUrl: "https://images.unsplash.com/photo-1552332386-f8dd00dc2f85?auto=format&fit=crop&w=1200&q=80",
     },
     votes: { left: 3, right: 5 },
-    meta: { category: "Food", createdBy: "Anonymous" },
+    meta: { category: "Food", createdBy: "foodie" },
   },
 ];
 
@@ -300,6 +301,7 @@ const ChoiceOption: React.FC<{
 };
 
 export default function HomeScreen() {
+  const router = useRouter();
   const [questions, setQuestions] = React.useState(SAMPLE_QUESTIONS);
   const [index, setIndex] = React.useState(0);
   const [displayIndex, setDisplayIndex] = React.useState(0);
@@ -609,10 +611,36 @@ export default function HomeScreen() {
             ]}
           >
             <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: "#222" }}>
-              <Text style={{ color: "#aaa", fontSize: 12 }}>
-                {question.meta?.category ?? "General"}
-                {question.meta?.createdBy ? ` • ${question.meta.createdBy}` : ""}
-              </Text>
+              <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
+                <Text style={{ color: "#aaa", fontSize: 12 }}>
+                  {question.meta?.category ?? "General"}
+                </Text>
+                {question.meta?.createdBy && (
+                  <>
+                    <Text style={{ color: "#aaa", fontSize: 12 }}> • </Text>
+                    {question.meta.createdBy !== "Anonymous" ? (
+                      <Pressable
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                          router.push({
+                            pathname: "/user-profile",
+                            params: { username: question.meta.createdBy, userId: question.meta.createdBy?.toLowerCase().replace(/\s+/g, "") || "1" },
+                          });
+                        }}
+                      >
+                        {({ pressed }) => (
+                          <Text style={{ color: "#aaa", fontSize: 12, textDecorationLine: pressed ? "underline" : "none" }}>
+                            {question.meta.createdBy}
+                          </Text>
+                        )}
+                      </Pressable>
+                    ) : (
+                      <Text style={{ color: "#aaa", fontSize: 12 }}>{question.meta.createdBy}</Text>
+                    )}
+                  </>
+                )}
+              </View>
               <Text style={{ color: "white", fontSize: 20, fontWeight: "800", marginTop: 6 }}>
                 {question.title}
               </Text>

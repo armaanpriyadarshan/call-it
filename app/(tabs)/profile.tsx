@@ -648,17 +648,28 @@ const ProfileHeader: React.FC<{
   );
 };
 
-const UserListItem: React.FC<{ user: User }> = ({ user }) => (
-  <View
-    style={{
-      flexDirection: "row",
-      alignItems: "center",
-      paddingVertical: 12,
-      paddingHorizontal: 16,
-      borderBottomWidth: 1,
-      borderBottomColor: "#222",
-    }}
-  >
+const UserListItem: React.FC<{ user: User }> = ({ user }) => {
+  const router = useRouter();
+
+  return (
+    <Pressable
+      onPress={() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        router.push({
+          pathname: "/user-profile",
+          params: { username: user.username, userId: user.id },
+        });
+      }}
+      style={({ pressed }) => ({
+        flexDirection: "row",
+        alignItems: "center",
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        borderBottomWidth: 1,
+        borderBottomColor: "#222",
+        backgroundColor: pressed ? "#1c1c1c" : "transparent",
+      })}
+    >
     <View
       style={{
         width: 48,
@@ -699,8 +710,9 @@ const UserListItem: React.FC<{ user: User }> = ({ user }) => (
         </Text>
       )}
     </View>
-  </View>
-);
+    </Pressable>
+  );
+};
 
 const MyQuestionCard: React.FC<{
   question: Question;
@@ -911,6 +923,10 @@ export default function ProfileScreen() {
   const tabContainerInnerWidth = screenWidth - 48 - 2 - 8;
   const tabIndicatorWidth = tabContainerInnerWidth / 2;
   const followersFollowingTabIndicator = useRef(new Animated.Value(0)).current;
+  const followersFollowingOpacity = useRef(new Animated.Value(0)).current;
+  const followersFollowingTranslateY = useRef(new Animated.Value(20)).current;
+  const profileViewOpacity = useRef(new Animated.Value(1)).current;
+  const profileViewTranslateY = useRef(new Animated.Value(0)).current;
   
   useEffect(() => {
     Animated.timing(tabIndicatorPosition, {
@@ -1087,14 +1103,82 @@ export default function ProfileScreen() {
   useEffect(() => {
     if (profileView === "followers" || profileView === "following") {
       const currentTab = profileView === "followers" ? 0 : 1;
-      Animated.timing(followersFollowingTabIndicator, {
-        toValue: currentTab,
-        useNativeDriver: false,
-        duration: TAB_ANIMATION_DURATION,
-        easing: Easing.out(Easing.cubic),
-      }).start();
+      
+      followersFollowingOpacity.setValue(0);
+      followersFollowingTranslateY.setValue(20);
+      profileViewOpacity.setValue(1);
+      profileViewTranslateY.setValue(0);
+      
+      requestAnimationFrame(() => {
+        Animated.parallel([
+          Animated.timing(followersFollowingTabIndicator, {
+            toValue: currentTab,
+            useNativeDriver: false,
+            duration: TAB_ANIMATION_DURATION,
+            easing: Easing.out(Easing.cubic),
+          }),
+          Animated.timing(followersFollowingOpacity, {
+            toValue: 1,
+            useNativeDriver: true,
+            duration: TAB_ANIMATION_DURATION,
+            easing: Easing.out(Easing.cubic),
+          }),
+          Animated.timing(followersFollowingTranslateY, {
+            toValue: 0,
+            useNativeDriver: true,
+            duration: TAB_ANIMATION_DURATION,
+            easing: Easing.out(Easing.cubic),
+          }),
+          Animated.timing(profileViewOpacity, {
+            toValue: 0,
+            useNativeDriver: true,
+            duration: TAB_ANIMATION_DURATION,
+            easing: Easing.out(Easing.cubic),
+          }),
+          Animated.timing(profileViewTranslateY, {
+            toValue: -20,
+            useNativeDriver: true,
+            duration: TAB_ANIMATION_DURATION,
+            easing: Easing.out(Easing.cubic),
+          }),
+        ]).start();
+      });
+    } else {
+      followersFollowingOpacity.setValue(1);
+      followersFollowingTranslateY.setValue(0);
+      profileViewOpacity.setValue(0);
+      profileViewTranslateY.setValue(-20);
+      
+      requestAnimationFrame(() => {
+        Animated.parallel([
+          Animated.timing(followersFollowingOpacity, {
+            toValue: 0,
+            useNativeDriver: true,
+            duration: TAB_ANIMATION_DURATION,
+            easing: Easing.out(Easing.cubic),
+          }),
+          Animated.timing(followersFollowingTranslateY, {
+            toValue: 20,
+            useNativeDriver: true,
+            duration: TAB_ANIMATION_DURATION,
+            easing: Easing.out(Easing.cubic),
+          }),
+          Animated.timing(profileViewOpacity, {
+            toValue: 1,
+            useNativeDriver: true,
+            duration: TAB_ANIMATION_DURATION,
+            easing: Easing.out(Easing.cubic),
+          }),
+          Animated.timing(profileViewTranslateY, {
+            toValue: 0,
+            useNativeDriver: true,
+            duration: TAB_ANIMATION_DURATION,
+            easing: Easing.out(Easing.cubic),
+          }),
+        ]).start();
+      });
     }
-  }, [profileView, followersFollowingTabIndicator]);
+  }, [profileView, followersFollowingTabIndicator, followersFollowingOpacity, followersFollowingTranslateY, profileViewOpacity, profileViewTranslateY]);
 
   const resetCard = useCallback(() => {
     Animated.timing(cardPosition, {
@@ -1552,58 +1636,71 @@ export default function ProfileScreen() {
     );
   }
 
-  if (profileView === "followers" || profileView === "following") {
-    const currentTab = profileView === "followers" ? "followers" : "following";
-    const allUsers = currentTab === "followers" ? MOCK_FOLLOWERS : MOCK_FOLLOWING;
-    
-    const filteredUsers = allUsers.filter((user) => {
-      if (!followersFollowingSearch.trim()) return true;
-      const searchLower = followersFollowingSearch.toLowerCase();
-      const fullName = user.firstName && user.lastName 
-        ? `${user.firstName} ${user.lastName}`.toLowerCase()
-        : (user.firstName || user.username || "").toLowerCase();
-      const username = user.username.toLowerCase();
-      return fullName.includes(searchLower) || username.includes(searchLower);
-    });
+  const currentTab = profileView === "followers" ? "followers" : "following";
+  const allUsers = profileView === "followers" ? MOCK_FOLLOWERS : profileView === "following" ? MOCK_FOLLOWING : [];
+  
+  const filteredUsers = allUsers.filter((user) => {
+    if (!followersFollowingSearch.trim()) return true;
+    const searchLower = followersFollowingSearch.toLowerCase();
+    const fullName = user.firstName && user.lastName 
+      ? `${user.firstName} ${user.lastName}`.toLowerCase()
+      : (user.firstName || user.username || "").toLowerCase();
+    const username = user.username.toLowerCase();
+    return fullName.includes(searchLower) || username.includes(searchLower);
+  });
 
-    return (
-      <View style={{ flex: 1, backgroundColor: "black" }}>
-        <View
+  return (
+    <View style={{ flex: 1, backgroundColor: "black" }}>
+      {(profileView === "followers" || profileView === "following") && (
+        <Animated.View
           style={{
-            paddingTop: 60,
-            paddingBottom: 8,
-            paddingHorizontal: 24,
-            borderBottomWidth: 1,
-            borderBottomColor: "#333",
-            flexDirection: "row",
-            alignItems: "center",
-            gap: 12,
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            opacity: followersFollowingOpacity,
+            transform: [{ translateY: followersFollowingTranslateY }],
+            zIndex: profileView === "followers" || profileView === "following" ? 1 : 0,
           }}
+          pointerEvents={profileView === "followers" || profileView === "following" ? "auto" : "none"}
         >
-          <Pressable
-            onPress={() => {
-              setProfileView("profile");
-              setFollowersFollowingSearch("");
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            }}
-            style={({ pressed }) => ({
-              width: 40,
-              height: 40,
-              borderRadius: 12,
-              borderWidth: 1,
-              borderColor: pressed ? "#333" : "transparent",
-              backgroundColor: pressed ? "#1c1c1c" : "transparent",
+          <View
+            style={{
+              paddingTop: 60,
+              paddingBottom: 8,
+              paddingHorizontal: 24,
+              borderBottomWidth: 1,
+              borderBottomColor: "#333",
+              flexDirection: "row",
               alignItems: "center",
-              justifyContent: "center",
-            })}
+              gap: 12,
+            }}
           >
-            <Octicons name="chevron-left" size={20} color="#aaa" />
-          </Pressable>
-          <Text style={{ color: "white", fontSize: 20, fontWeight: "700", flex: 1 }}>People</Text>
-          <View style={{ width: 40 }} />
-        </View>
+            <Pressable
+              onPress={() => {
+                setProfileView("profile");
+                setFollowersFollowingSearch("");
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              }}
+              style={({ pressed }) => ({
+                width: 40,
+                height: 40,
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: pressed ? "#333" : "transparent",
+                backgroundColor: pressed ? "#1c1c1c" : "transparent",
+                alignItems: "center",
+                justifyContent: "center",
+              })}
+            >
+              <Octicons name="chevron-left" size={20} color="#aaa" />
+            </Pressable>
+            <Text style={{ color: "white", fontSize: 20, fontWeight: "700", flex: 1 }}>People</Text>
+            <View style={{ width: 40 }} />
+          </View>
 
-        <View style={{ paddingHorizontal: 24, marginTop: 16, marginBottom: 12 }}>
+          <View style={{ paddingHorizontal: 24, marginTop: 16, marginBottom: 12 }}>
           <View
             style={{
               flexDirection: "row",
@@ -1748,19 +1845,25 @@ export default function ProfileScreen() {
             </View>
           )}
         </ScrollView>
-      </View>
-    );
-  }
+        </Animated.View>
+      )}
 
-  return (
-    <View style={{ flex: 1, backgroundColor: "black" }}>
-      <ScrollView
-        contentContainerStyle={{ paddingBottom: 24 }}
-        showsVerticalScrollIndicator={false}
-          scrollEnabled={!isCategoryDropdownOpen}
-        keyboardShouldPersistTaps="always"
+      <Animated.View
+        style={{
+          flex: 1,
+          opacity: profileViewOpacity,
+          transform: [{ translateY: profileViewTranslateY }],
+          zIndex: profileView === "profile" ? 1 : 0,
+        }}
+        pointerEvents={profileView === "profile" ? "auto" : "none"}
       >
-        <ProfileHeader
+        <ScrollView
+          contentContainerStyle={{ paddingBottom: 24 }}
+          showsVerticalScrollIndicator={false}
+          scrollEnabled={!isCategoryDropdownOpen}
+          keyboardShouldPersistTaps="always"
+        >
+          <ProfileHeader
           onEditPress={handleEditProfile}
           onSignOut={handleSignOut}
           onFollowersPress={() => {
@@ -2242,6 +2345,7 @@ export default function ProfileScreen() {
           </View>
         </View>
       </ScrollView>
+      </Animated.View>
     </View>
   );
 }

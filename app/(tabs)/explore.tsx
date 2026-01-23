@@ -1,6 +1,7 @@
 import { useExploreTabReset } from "@/contexts/explore-tab-context";
 import Octicons from "@expo/vector-icons/Octicons";
 import * as Haptics from "expo-haptics";
+import { useRouter } from "expo-router";
 import React from "react";
 import {
   Animated,
@@ -60,7 +61,7 @@ const SAMPLE_QUESTIONS: Question[] = [
       imageUrl: "https://images.unsplash.com/photo-1595777457583-95e059d581b8?w=400&h=400&fit=crop",
     },
     votes: { left: 12, right: 8 },
-    meta: { category: "Style", createdBy: "Anonymous" },
+    meta: { category: "Style", createdBy: "fashionista" },
   },
   {
     id: "q2",
@@ -78,7 +79,7 @@ const SAMPLE_QUESTIONS: Question[] = [
     left: { id: "left", label: "Option A (brand)" },
     right: { id: "right", label: "Option B (growth)" },
     votes: { left: 7, right: 15 },
-    meta: { category: "Career", createdBy: "Anonymous" },
+    meta: { category: "Career", createdBy: "careercoach" },
   },
   {
     id: "q4",
@@ -95,7 +96,7 @@ const SAMPLE_QUESTIONS: Question[] = [
       imageUrl: "https://images.unsplash.com/photo-1552332386-f8dd00dc2f85?auto=format&fit=crop&w=1200&q=80",
     },
     votes: { left: 3, right: 5 },
-    meta: { category: "Food", createdBy: "Anonymous" },
+    meta: { category: "Food", createdBy: "foodie" },
   },
   {
     id: "q5",
@@ -104,7 +105,7 @@ const SAMPLE_QUESTIONS: Question[] = [
     left: { id: "left", label: "Stay home" },
     right: { id: "right", label: "Go out" },
     votes: { left: 18, right: 32 },
-    meta: { category: "Social", createdBy: "Anonymous" },
+    meta: { category: "Social", createdBy: "weekendwarrior" },
   },
   {
     id: "q6",
@@ -130,7 +131,7 @@ const SAMPLE_QUESTIONS: Question[] = [
       imageUrl: "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=400&h=400&fit=crop",
     },
     votes: { left: 42, right: 28 },
-    meta: { category: "Travel", createdBy: "Anonymous" },
+    meta: { category: "Travel", createdBy: "wanderlust" },
   },
   {
     id: "q8",
@@ -139,7 +140,7 @@ const SAMPLE_QUESTIONS: Question[] = [
     left: { id: "left", label: "Early riser" },
     right: { id: "right", label: "Sleep in" },
     votes: { left: 31, right: 44 },
-    meta: { category: "Health", createdBy: "Anonymous" },
+    meta: { category: "Health", createdBy: "fitnessguru" },
   },
 ];
 
@@ -406,6 +407,7 @@ const ChoiceOption: React.FC<{
 };
 
 const QuestionCard: React.FC<{ question: Question; onPress: () => void }> = ({ question, onPress }) => {
+  const router = useRouter();
   const totalVotes = (question.votes?.left ?? 0) + (question.votes?.right ?? 0);
 
   return (
@@ -434,7 +436,29 @@ const QuestionCard: React.FC<{ question: Question; onPress: () => void }> = ({ q
             <Text style={{ color: "#aaa", fontSize: 12, marginRight: 8 }}>{question.meta.category}</Text>
           )}
           {question.meta?.createdBy && (
-            <Text style={{ color: "#666", fontSize: 12 }}>• {question.meta.createdBy}</Text>
+            <>
+              <Text style={{ color: "#666", fontSize: 12 }}>• </Text>
+              {question.meta.createdBy !== "Anonymous" ? (
+                <Pressable
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    router.push({
+                      pathname: "/user-profile",
+                      params: { username: question.meta.createdBy, userId: question.meta.createdBy?.toLowerCase().replace(/\s+/g, "") || "1" },
+                    });
+                  }}
+                >
+                  {({ pressed }) => (
+                    <Text style={{ color: "#666", fontSize: 12, textDecorationLine: pressed ? "underline" : "none" }}>
+                      {question.meta.createdBy}
+                    </Text>
+                  )}
+                </Pressable>
+              ) : (
+                <Text style={{ color: "#666", fontSize: 12 }}>{question.meta.createdBy}</Text>
+              )}
+            </>
           )}
         </View>
 
@@ -563,6 +587,7 @@ const AutocompleteItem: React.FC<{
 );
 
 export default function ExploreScreen() {
+  const router = useRouter();
   const { registerResetCallback, unregisterResetCallback } = useExploreTabReset();
 
   const [searchQuery, setSearchQuery] = React.useState("");
@@ -1086,10 +1111,36 @@ export default function ExploreScreen() {
             ]}
           >
             <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: "#222" }}>
-              <Text style={{ color: "#aaa", fontSize: 12 }}>
-                {question.meta?.category ?? "General"}
-                {question.meta?.createdBy ? ` • ${question.meta.createdBy}` : ""}
-              </Text>
+              <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
+                <Text style={{ color: "#aaa", fontSize: 12 }}>
+                  {question.meta?.category ?? "General"}
+                </Text>
+                {question.meta?.createdBy && (
+                  <>
+                    <Text style={{ color: "#aaa", fontSize: 12 }}> • </Text>
+                    {question.meta.createdBy !== "Anonymous" ? (
+                      <Pressable
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                          router.push({
+                            pathname: "/user-profile",
+                            params: { username: question.meta.createdBy, userId: question.meta.createdBy?.toLowerCase().replace(/\s+/g, "") || "1" },
+                          });
+                        }}
+                      >
+                        {({ pressed }) => (
+                          <Text style={{ color: "#aaa", fontSize: 12, textDecorationLine: pressed ? "underline" : "none" }}>
+                            {question.meta.createdBy}
+                          </Text>
+                        )}
+                      </Pressable>
+                    ) : (
+                      <Text style={{ color: "#aaa", fontSize: 12 }}>{question.meta.createdBy}</Text>
+                    )}
+                  </>
+                )}
+              </View>
               <Text style={{ color: "white", fontSize: 20, fontWeight: "800", marginTop: 6 }}>
                 {question.title}
               </Text>
