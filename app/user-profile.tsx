@@ -693,12 +693,18 @@ export default function UserProfileScreen() {
   const followersFollowingTranslateY = useRef(new Animated.Value(20)).current;
   const profileViewOpacity = useRef(new Animated.Value(1)).current;
   const profileViewTranslateY = useRef(new Animated.Value(0)).current;
+  const prevProfileViewRef = useRef<"profile" | "followers" | "following">("profile");
 
   const cardPosition = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const cardEntryScale = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
-    if (profileView === "followers" || profileView === "following") {
+    const prevProfileView = prevProfileViewRef.current;
+    const isTransitioningToFollowersFollowing = (prevProfileView === "profile" && (profileView === "followers" || profileView === "following"));
+    const isTransitioningToProfile = ((prevProfileView === "followers" || prevProfileView === "following") && profileView === "profile");
+    const isTogglingBetweenFollowersFollowing = (prevProfileView === "followers" && profileView === "following") || (prevProfileView === "following" && profileView === "followers");
+
+    if (isTransitioningToFollowersFollowing) {
       const currentTab = profileView === "followers" ? 0 : 1;
       
       followersFollowingOpacity.setValue(0);
@@ -740,7 +746,7 @@ export default function UserProfileScreen() {
           }),
         ]).start();
       });
-    } else {
+    } else if (isTransitioningToProfile) {
       followersFollowingOpacity.setValue(1);
       followersFollowingTranslateY.setValue(0);
       profileViewOpacity.setValue(0);
@@ -774,7 +780,17 @@ export default function UserProfileScreen() {
           }),
         ]).start();
       });
+    } else if (isTogglingBetweenFollowersFollowing) {
+      const currentTab = profileView === "followers" ? 0 : 1;
+      Animated.timing(followersFollowingTabIndicator, {
+        toValue: currentTab,
+        useNativeDriver: false,
+        duration: TAB_ANIMATION_DURATION,
+        easing: Easing.out(Easing.cubic),
+      }).start();
     }
+
+    prevProfileViewRef.current = profileView;
   }, [profileView, followersFollowingTabIndicator, followersFollowingOpacity, followersFollowingTranslateY, profileViewOpacity, profileViewTranslateY]);
 
   const user: User = useMemo(() => {
@@ -1288,8 +1304,8 @@ export default function UserProfileScreen() {
           }}
           pointerEvents={profileView === "followers" || profileView === "following" ? "auto" : "none"}
         >
-
-          <View style={{ paddingHorizontal: 24, marginTop: 16, marginBottom: 12 }}>
+          <View style={{ paddingTop: 108 }}>
+            <View style={{ paddingHorizontal: 24, marginTop: 16, marginBottom: 12 }}>
             <View
               style={{
                 flexDirection: "row",
@@ -1449,6 +1465,7 @@ export default function UserProfileScreen() {
               );
             })()}
           </ScrollView>
+          </View>
         </Animated.View>
       )}
 

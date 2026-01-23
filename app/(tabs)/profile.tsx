@@ -927,6 +927,7 @@ export default function ProfileScreen() {
   const followersFollowingTranslateY = useRef(new Animated.Value(20)).current;
   const profileViewOpacity = useRef(new Animated.Value(1)).current;
   const profileViewTranslateY = useRef(new Animated.Value(0)).current;
+  const prevProfileViewRef = useRef<"profile" | "followers" | "following">("profile");
   
   useEffect(() => {
     Animated.timing(tabIndicatorPosition, {
@@ -1101,7 +1102,12 @@ export default function ProfileScreen() {
   }, [registerResetCallback, unregisterResetCallback, resetToRoot]);
 
   useEffect(() => {
-    if (profileView === "followers" || profileView === "following") {
+    const prevProfileView = prevProfileViewRef.current;
+    const isTransitioningToFollowersFollowing = (prevProfileView === "profile" && (profileView === "followers" || profileView === "following"));
+    const isTransitioningToProfile = ((prevProfileView === "followers" || prevProfileView === "following") && profileView === "profile");
+    const isTogglingBetweenFollowersFollowing = (prevProfileView === "followers" && profileView === "following") || (prevProfileView === "following" && profileView === "followers");
+
+    if (isTransitioningToFollowersFollowing) {
       const currentTab = profileView === "followers" ? 0 : 1;
       
       followersFollowingOpacity.setValue(0);
@@ -1143,7 +1149,7 @@ export default function ProfileScreen() {
           }),
         ]).start();
       });
-    } else {
+    } else if (isTransitioningToProfile) {
       followersFollowingOpacity.setValue(1);
       followersFollowingTranslateY.setValue(0);
       profileViewOpacity.setValue(0);
@@ -1177,7 +1183,17 @@ export default function ProfileScreen() {
           }),
         ]).start();
       });
+    } else if (isTogglingBetweenFollowersFollowing) {
+      const currentTab = profileView === "followers" ? 0 : 1;
+      Animated.timing(followersFollowingTabIndicator, {
+        toValue: currentTab,
+        useNativeDriver: false,
+        duration: TAB_ANIMATION_DURATION,
+        easing: Easing.out(Easing.cubic),
+      }).start();
     }
+
+    prevProfileViewRef.current = profileView;
   }, [profileView, followersFollowingTabIndicator, followersFollowingOpacity, followersFollowingTranslateY, profileViewOpacity, profileViewTranslateY]);
 
   const resetCard = useCallback(() => {

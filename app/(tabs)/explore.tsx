@@ -4,16 +4,16 @@ import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import React from "react";
 import {
-  Animated,
-  Dimensions,
-  FlatList,
-  Image,
-  PanResponder,
-  Pressable,
-  ScrollView,
-  Text,
-  TextInput,
-  View,
+    Animated,
+    Dimensions,
+    FlatList,
+    Image,
+    PanResponder,
+    Pressable,
+    ScrollView,
+    Text,
+    TextInput,
+    View,
 } from "react-native";
 
 type Choice = {
@@ -43,6 +43,30 @@ type VoteHistoryItem = {
   questionIndex: number;
   direction: "left" | "right";
 };
+
+type User = {
+  id: string;
+  username: string;
+  avatarUrl?: string;
+  questionsCount: number;
+  followersCount: number;
+  isFollowing?: boolean;
+};
+
+const SAMPLE_USERS: User[] = [
+  { id: "u1", username: "fashionista", questionsCount: 24, followersCount: 1520, avatarUrl: `https://i.pravatar.cc/150?img=${1}` },
+  { id: "u2", username: "careercoach", questionsCount: 18, followersCount: 3200, avatarUrl: `https://i.pravatar.cc/150?img=${2}` },
+  { id: "u3", username: "foodie", questionsCount: 42, followersCount: 890, avatarUrl: `https://i.pravatar.cc/150?img=${3}` },
+  { id: "u4", username: "weekendwarrior", questionsCount: 12, followersCount: 450, avatarUrl: `https://i.pravatar.cc/150?img=${4}` },
+  { id: "u5", username: "wanderlust", questionsCount: 31, followersCount: 2100, avatarUrl: `https://i.pravatar.cc/150?img=${5}` },
+  { id: "u6", username: "fitnessguru", questionsCount: 56, followersCount: 5400, avatarUrl: `https://i.pravatar.cc/150?img=${6}` },
+  { id: "u7", username: "techie", questionsCount: 27, followersCount: 1800, avatarUrl: `https://i.pravatar.cc/150?img=${7}` },
+  { id: "u8", username: "bookworm", questionsCount: 19, followersCount: 720, avatarUrl: `https://i.pravatar.cc/150?img=${8}` },
+  { id: "u9", username: "musicfan", questionsCount: 33, followersCount: 1100, avatarUrl: `https://i.pravatar.cc/150?img=${9}` },
+  { id: "u10", username: "gamer", questionsCount: 45, followersCount: 3800, avatarUrl: `https://i.pravatar.cc/150?img=${10}` },
+];
+
+type SearchFilter = "all" | "users" | "questions";
 
 const SAMPLE_QUESTIONS: Question[] = [
   {
@@ -445,13 +469,13 @@ const QuestionCard: React.FC<{ question: Question; onPress: () => void }> = ({ q
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                     router.push({
                       pathname: "/user-profile",
-                      params: { username: question.meta.createdBy, userId: question.meta.createdBy?.toLowerCase().replace(/\s+/g, "") || "1" },
+                      params: { username: question.meta?.createdBy, userId: question.meta?.createdBy?.toLowerCase().replace(/\s+/g, "") || "1" },
                     });
                   }}
                 >
                   {({ pressed }) => (
                     <Text style={{ color: "#666", fontSize: 12, textDecorationLine: pressed ? "underline" : "none" }}>
-                      {question.meta.createdBy}
+                      {question.meta?.createdBy}
                     </Text>
                   )}
                 </Pressable>
@@ -475,6 +499,106 @@ const QuestionCard: React.FC<{ question: Question; onPress: () => void }> = ({ q
     </Pressable>
   );
 };
+
+const UserSearchCard: React.FC<{
+  user: User;
+  onPress: () => void;
+}> = ({ user, onPress }) => {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => ({
+        flexDirection: "row",
+        alignItems: "center",
+        backgroundColor: "#1c1c1c",
+        borderRadius: 12,
+        padding: 16,
+        marginBottom: 12,
+        borderWidth: 1,
+        borderColor: "#333",
+        opacity: pressed ? 0.8 : 1,
+      })}
+    >
+      <View
+        style={{
+          width: 48,
+          height: 48,
+          borderRadius: 24,
+          backgroundColor: user.avatarUrl ? "transparent" : "#333",
+          marginRight: 12,
+          overflow: "hidden",
+        }}
+      >
+        {user.avatarUrl ? (
+          <Image
+            source={{ uri: user.avatarUrl }}
+            style={{ width: 48, height: 48 }}
+          />
+        ) : (
+          <View
+            style={{
+              width: 48,
+              height: 48,
+              backgroundColor: "#333",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <Text style={{ color: "#aaa", fontSize: 18, fontWeight: "600" }}>
+              {user.username[0].toUpperCase()}
+            </Text>
+          </View>
+        )}
+      </View>
+
+      <View style={{ flex: 1 }}>
+        <Text style={{ color: "white", fontSize: 16, fontWeight: "600", marginBottom: 4 }}>
+          {user.username}
+        </Text>
+        <View style={{ flexDirection: "row", gap: 12 }}>
+          <Text style={{ color: "#666", fontSize: 12 }}>
+            {user.questionsCount} questions
+          </Text>
+          <Text style={{ color: "#666", fontSize: 12 }}>
+            {user.followersCount} followers
+          </Text>
+        </View>
+      </View>
+
+      <Octicons name="chevron-right" size={20} color="#666" />
+    </Pressable>
+  );
+};
+
+const SearchFilterTab: React.FC<{
+  label: string;
+  isActive: boolean;
+  onPress: () => void;
+  count?: number;
+}> = ({ label, isActive, onPress, count }) => (
+  <Pressable
+    onPress={onPress}
+    style={({ pressed }) => ({
+      paddingHorizontal: 16,
+      paddingVertical: 8,
+      borderRadius: 20,
+      backgroundColor: isActive ? "white" : "transparent",
+      borderWidth: 1,
+      borderColor: isActive ? "white" : "#333",
+      opacity: pressed ? 0.8 : 1,
+    })}
+  >
+    <Text
+      style={{
+        color: isActive ? "black" : "#aaa",
+        fontSize: 14,
+        fontWeight: "600",
+      }}
+    >
+      {label}{count !== undefined ? ` (${count})` : ""}
+    </Text>
+  </Pressable>
+);
 
 const SearchBar = React.forwardRef<
   TextInput,
@@ -508,7 +632,7 @@ const SearchBar = React.forwardRef<
         onFocus={onFocus}
         onBlur={onBlur}
         onSubmitEditing={onSubmitEditing}
-        placeholder="Search questions"
+        placeholder="Search"
         placeholderTextColor="#666"
         style={{
           flex: 1,
@@ -603,6 +727,8 @@ export default function ExploreScreen() {
   const [swipeDirection, setSwipeDirection] = React.useState<"left" | "right" | null>(null);
   const [voteHistory, setVoteHistory] = React.useState<VoteHistoryItem[]>([]);
   const [cardOpacity, setCardOpacity] = React.useState(1);
+  const [searchFilter, setSearchFilter] = React.useState<SearchFilter>("all");
+  const [users] = React.useState<User[]>(SAMPLE_USERS);
 
   const position = React.useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const entryScale = React.useRef(new Animated.Value(1)).current;
@@ -812,28 +938,35 @@ export default function ExploreScreen() {
   );
 
   const autocompleteSuggestions = React.useMemo(() => {
-    if (!searchQuery.trim() || searchQuery.length < 1) return [];
+    if (!searchQuery.trim() || searchQuery.length < 1) return { questions: [] as string[], users: [] as User[] };
 
     const query = searchQuery.toLowerCase();
-    const suggestions = new Set<string>();
+    const questionSuggestions = new Set<string>();
 
     questions.forEach((q) => {
       if (q.title.toLowerCase().includes(query)) {
-        suggestions.add(q.title);
+        questionSuggestions.add(q.title);
       }
       if (q.meta?.category?.toLowerCase().includes(query)) {
-        suggestions.add(q.meta.category);
+        questionSuggestions.add(q.meta.category);
       }
       if (q.left.label.toLowerCase().includes(query)) {
-        suggestions.add(q.left.label);
+        questionSuggestions.add(q.left.label);
       }
       if (q.right.label.toLowerCase().includes(query)) {
-        suggestions.add(q.right.label);
+        questionSuggestions.add(q.right.label);
       }
     });
 
-    return Array.from(suggestions).slice(0, 5);
-  }, [searchQuery, questions]);
+    const userSuggestions = users.filter(
+      (u) => u.username.toLowerCase().includes(query)
+    ).slice(0, 3);
+
+    return {
+      questions: Array.from(questionSuggestions).slice(0, 5),
+      users: userSuggestions,
+    };
+  }, [searchQuery, questions, users]);
 
   const filteredQuestions = React.useMemo(() => {
     if (!performedSearch.trim()) return [];
@@ -849,10 +982,18 @@ export default function ExploreScreen() {
     );
   }, [performedSearch, questions]);
 
+  const filteredUsers = React.useMemo(() => {
+    if (!performedSearch.trim()) return [];
+
+    const query = performedSearch.toLowerCase();
+    return users.filter((u) => u.username.toLowerCase().includes(query));
+  }, [performedSearch, users]);
+
   const handleSearchSubmit = React.useCallback(() => {
     if (searchQuery.trim()) {
       const trimmed = searchQuery.trim();
       setPerformedSearch(trimmed);
+      setSearchFilter("all");
       if (!recentSearches.includes(trimmed)) {
         addToRecentSearches(trimmed);
       }
@@ -884,6 +1025,7 @@ export default function ExploreScreen() {
     setSearchQuery("");
     setPerformedSearch("");
     setSearchFocused(true);
+    setSearchFilter("all");
   }, [clearBlurTimeout]);
 
   const handleSearchTextChange = React.useCallback(
@@ -1125,13 +1267,13 @@ export default function ExploreScreen() {
                           Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                           router.push({
                             pathname: "/user-profile",
-                            params: { username: question.meta.createdBy, userId: question.meta.createdBy?.toLowerCase().replace(/\s+/g, "") || "1" },
+                            params: { username: question.meta?.createdBy, userId: question.meta?.createdBy?.toLowerCase().replace(/\s+/g, "") || "1" },
                           });
                         }}
                       >
                         {({ pressed }) => (
                           <Text style={{ color: "#aaa", fontSize: 12, textDecorationLine: pressed ? "underline" : "none" }}>
-                            {question.meta.createdBy}
+                            {question.meta?.createdBy}
                           </Text>
                         )}
                       </Pressable>
@@ -1281,22 +1423,87 @@ export default function ExploreScreen() {
               )}
             </>
           ) : (
-            <>
-              <View style={{ paddingVertical: 12, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: "#222" }}>
-                <Text style={{ color: "#aaa", fontSize: 14, fontWeight: "600" }}>Suggestions</Text>
-              </View>
-              {autocompleteSuggestions.length > 0 ? (
-                <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
-                  {autocompleteSuggestions.map((item, idx) => (
+            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+              {autocompleteSuggestions.users.length > 0 && (
+                <>
+                  <View style={{ paddingVertical: 12, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: "#222" }}>
+                    <Text style={{ color: "#aaa", fontSize: 14, fontWeight: "600" }}>Users</Text>
+                  </View>
+                  {autocompleteSuggestions.users.map((user) => (
+                    <Pressable
+                      key={user.id}
+                      onPress={() => {
+                        clearBlurTimeout();
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        router.push({
+                          pathname: "/user-profile",
+                          params: { username: user.username, userId: user.id },
+                        });
+                      }}
+                      style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        paddingVertical: 12,
+                        paddingHorizontal: 16,
+                        borderBottomWidth: 1,
+                        borderBottomColor: "#222",
+                      }}
+                    >
+                      <View
+                        style={{
+                          width: 32,
+                          height: 32,
+                          borderRadius: 16,
+                          backgroundColor: user.avatarUrl ? "transparent" : "#333",
+                          marginRight: 12,
+                          overflow: "hidden",
+                        }}
+                      >
+                        {user.avatarUrl ? (
+                          <Image
+                            source={{ uri: user.avatarUrl }}
+                            style={{ width: 32, height: 32 }}
+                          />
+                        ) : (
+                          <View
+                            style={{
+                              width: 32,
+                              height: 32,
+                              backgroundColor: "#333",
+                              alignItems: "center",
+                              justifyContent: "center",
+                            }}
+                          >
+                            <Text style={{ color: "#aaa", fontSize: 14, fontWeight: "600" }}>
+                              {user.username[0].toUpperCase()}
+                            </Text>
+                          </View>
+                        )}
+                      </View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: "white", fontSize: 16 }}>{user.username}</Text>
+                      </View>
+                      <Octicons name="chevron-right" size={16} color="#666" />
+                    </Pressable>
+                  ))}
+                </>
+              )}
+              {autocompleteSuggestions.questions.length > 0 && (
+                <>
+                  <View style={{ paddingVertical: 12, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: "#222" }}>
+                    <Text style={{ color: "#aaa", fontSize: 14, fontWeight: "600" }}>Questions</Text>
+                  </View>
+                  {autocompleteSuggestions.questions.map((item, idx) => (
                     <AutocompleteItem key={`${item}-${idx}`} suggestion={item} onPress={() => handleAutocompletePress(item)} />
                   ))}
-                </ScrollView>
-              ) : (
+                </>
+              )}
+              {autocompleteSuggestions.users.length === 0 && autocompleteSuggestions.questions.length === 0 && (
                 <View style={{ flex: 1, justifyContent: "center", alignItems: "center", padding: 24 }}>
                   <Text style={{ color: "#666", fontSize: 14 }}>No suggestions found</Text>
                 </View>
               )}
-            </>
+            </ScrollView>
           )}
         </View>
       </View>
@@ -1326,20 +1533,109 @@ export default function ExploreScreen() {
       </View>
 
       {performedSearch ? (
-        <FlatList
-          data={filteredQuestions}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => <QuestionCard question={item} onPress={() => handleCardPress(item)} />}
-          contentContainerStyle={{ padding: 16 }}
-          showsVerticalScrollIndicator={false}
-          ListEmptyComponent={
-            <View style={{ flex: 1, justifyContent: "center", alignItems: "center", padding: 24 }}>
-              <Text style={{ color: "#666", fontSize: 14 }}>
-                No results found for {'"' + performedSearch + '"'}
-              </Text>
-            </View>
-          }
-        />
+        <>
+          <View
+            style={{
+              flexDirection: "row",
+              gap: 8,
+              paddingHorizontal: 16,
+              paddingVertical: 12,
+              borderBottomWidth: 1,
+              borderBottomColor: "#222",
+            }}
+          >
+            <SearchFilterTab
+              label="All"
+              isActive={searchFilter === "all"}
+              onPress={() => setSearchFilter("all")}
+              count={filteredUsers.length + filteredQuestions.length}
+            />
+            <SearchFilterTab
+              label="Users"
+              isActive={searchFilter === "users"}
+              onPress={() => setSearchFilter("users")}
+              count={filteredUsers.length}
+            />
+            <SearchFilterTab
+              label="Questions"
+              isActive={searchFilter === "questions"}
+              onPress={() => setSearchFilter("questions")}
+              count={filteredQuestions.length}
+            />
+          </View>
+
+          <ScrollView
+            contentContainerStyle={{ padding: 16 }}
+            showsVerticalScrollIndicator={false}
+          >
+            {(searchFilter === "all" || searchFilter === "users") && filteredUsers.length > 0 && (
+              <>
+                {searchFilter === "all" && (
+                  <Text style={{ color: "#aaa", fontSize: 14, fontWeight: "600", marginBottom: 12 }}>
+                    Users
+                  </Text>
+                )}
+                {filteredUsers.map((user) => (
+                  <UserSearchCard
+                    key={user.id}
+                    user={user}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      router.push({
+                        pathname: "/user-profile",
+                        params: { username: user.username, userId: user.id },
+                      });
+                    }}
+                  />
+                ))}
+                {searchFilter === "all" && filteredQuestions.length > 0 && (
+                  <View style={{ height: 16 }} />
+                )}
+              </>
+            )}
+
+            {(searchFilter === "all" || searchFilter === "questions") && filteredQuestions.length > 0 && (
+              <>
+                {searchFilter === "all" && (
+                  <Text style={{ color: "#aaa", fontSize: 14, fontWeight: "600", marginBottom: 12 }}>
+                    Questions
+                  </Text>
+                )}
+                {filteredQuestions.map((question) => (
+                  <QuestionCard
+                    key={question.id}
+                    question={question}
+                    onPress={() => handleCardPress(question)}
+                  />
+                ))}
+              </>
+            )}
+
+            {filteredUsers.length === 0 && filteredQuestions.length === 0 && (
+              <View style={{ flex: 1, justifyContent: "center", alignItems: "center", padding: 24 }}>
+                <Text style={{ color: "#666", fontSize: 14 }}>
+                  No results found for {'"' + performedSearch + '"'}
+                </Text>
+              </View>
+            )}
+
+            {searchFilter === "users" && filteredUsers.length === 0 && (
+              <View style={{ flex: 1, justifyContent: "center", alignItems: "center", padding: 24 }}>
+                <Text style={{ color: "#666", fontSize: 14 }}>
+                  No users found for {'"' + performedSearch + '"'}
+                </Text>
+              </View>
+            )}
+
+            {searchFilter === "questions" && filteredQuestions.length === 0 && (
+              <View style={{ flex: 1, justifyContent: "center", alignItems: "center", padding: 24 }}>
+                <Text style={{ color: "#666", fontSize: 14 }}>
+                  No questions found for {'"' + performedSearch + '"'}
+                </Text>
+              </View>
+            )}
+          </ScrollView>
+        </>
       ) : (
         <FlatList
           data={questions}
