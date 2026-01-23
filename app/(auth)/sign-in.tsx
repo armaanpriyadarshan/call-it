@@ -29,19 +29,20 @@ export default function SignInEmail() {
     JetBrainsMono_700Bold,
   });
 
-  const [email, setEmail] = React.useState("");
+  const [identifier, setIdentifier] = React.useState("");
   const [password, setPassword] = React.useState("");
 
   const [submitted, setSubmitted] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const [serverError, setServerError] = React.useState<string | null>(null);
 
-  const trimmedEmail = email.trim();
-  const emailOk = trimmedEmail.length > 0 && isValidEmail(trimmedEmail);
+  const trimmedIdentifier = identifier.trim();
+  const isEmail = isValidEmail(trimmedIdentifier);
+  const identifierOk = trimmedIdentifier.length > 0 && (isEmail || (trimmedIdentifier.length >= 3 && /^[a-zA-Z0-9_]+$/.test(trimmedIdentifier)));
   const passwordOk = password.length > 0;
-  const formOk = emailOk && passwordOk;
+  const formOk = identifierOk && passwordOk;
 
-  const showEmailError = submitted && !emailOk;
+  const showIdentifierError = submitted && !identifierOk;
   const showPasswordError = submitted && !passwordOk;
 
   const onSignInPress = async () => {
@@ -55,7 +56,7 @@ export default function SignInEmail() {
       setBusy(true);
 
       const attempt = await signIn.create({
-        identifier: trimmedEmail,
+        identifier: trimmedIdentifier,
         password,
       });
 
@@ -103,20 +104,21 @@ export default function SignInEmail() {
 
         <View style={{ gap: 12 }}>
           <TextInput
-            value={email}
-            onChangeText={setEmail}
-            placeholder="Email"
+            value={identifier}
+            onChangeText={setIdentifier}
+            placeholder="Email or username"
             placeholderTextColor="#666"
             autoCapitalize="none"
-            keyboardType="email-address"
+            autoCorrect={false}
+            keyboardType="default"
             style={{
               ...inputStyle,
-              borderColor: showEmailError ? "#ff6b6b" : "#333",
+              borderColor: showIdentifierError ? "#ff6b6b" : "#333",
             }}
           />
-          {showEmailError ? (
+          {showIdentifierError ? (
             <Text style={{ color: "#ff6b6b", fontSize: 12 }}>
-              Please enter a valid email.
+              Please enter a valid email or username.
             </Text>
           ) : null}
 

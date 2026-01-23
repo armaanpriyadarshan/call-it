@@ -29,6 +29,7 @@ export default function SignUp() {
         JetBrainsMono_700Bold,
     });
 
+    const [username, setUsername] = React.useState("");
     const [email, setEmail] = React.useState("");
     const [password, setPassword] = React.useState("");
     const [confirmPassword, setConfirmPassword] = React.useState("");
@@ -41,13 +42,16 @@ export default function SignUp() {
 
     const [serverError, setServerError] = React.useState<string | null>(null);
 
+    const trimmedUsername = username.trim();
     const trimmedEmail = email.trim();
+    const usernameOk = trimmedUsername.length >= 3 && trimmedUsername.length <= 20 && /^[a-zA-Z0-9_]+$/.test(trimmedUsername);
     const emailOk = trimmedEmail.length > 0 && isValidEmail(trimmedEmail);
     const passwordOk = password.length >= 8;
     const confirmOk = confirmPassword.length > 0 && confirmPassword === password;
 
-    const formOk = emailOk && passwordOk && confirmOk;
+    const formOk = usernameOk && emailOk && passwordOk && confirmOk;
 
+    const showUsernameError = submitted && !usernameOk;
     const showEmailError = submitted && !emailOk;
     const showPasswordError = submitted && !passwordOk;
     const showConfirmError = submitted && !confirmOk;
@@ -65,6 +69,7 @@ export default function SignUp() {
             await signUp.create({
                 emailAddress: trimmedEmail,
                 password,
+                username: trimmedUsername,
             });
 
             await signUp.prepareEmailAddressVerification({ strategy: "email_code" });
@@ -136,6 +141,24 @@ export default function SignUp() {
                 <View style={{ gap: 12 }}>
                     {!pendingVerification ? (
                         <>
+                            <TextInput
+                                value={username}
+                                onChangeText={setUsername}
+                                placeholder="Username"
+                                placeholderTextColor="#666"
+                                autoCapitalize="none"
+                                autoCorrect={false}
+                                style={{
+                                    ...inputStyle,
+                                    borderColor: showUsernameError ? "#ff6b6b" : "#333",
+                                }}
+                            />
+                            {showUsernameError ? (
+                                <Text style={{ color: "#ff6b6b", fontSize: 12 }}>
+                                    Username must be 3-20 characters and contain only letters, numbers, and underscores.
+                                </Text>
+                            ) : null}
+
                             <TextInput
                                 value={email}
                                 onChangeText={setEmail}
