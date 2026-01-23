@@ -5,11 +5,13 @@ import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
 import { Colors } from '@/constants/theme';
 import { ExploreTabProvider, useExploreTabReset } from '@/contexts/explore-tab-context';
+import { ProfileTabProvider, useProfileTabReset } from '@/contexts/profile-tab-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
 function TabLayoutContent() {
   const colorScheme = useColorScheme();
-  const { triggerReset, setExploreTabActive } = useExploreTabReset();
+  const { triggerReset: triggerExploreReset, setExploreTabActive } = useExploreTabReset();
+  const { triggerReset: triggerProfileReset, setProfileTabActive } = useProfileTabReset();
 
   return (
     <Tabs
@@ -27,6 +29,7 @@ function TabLayoutContent() {
         listeners={{
           focus: () => {
             setExploreTabActive(false);
+            setProfileTabActive(false);
           },
         }}
       />
@@ -39,12 +42,13 @@ function TabLayoutContent() {
         listeners={{
           focus: () => {
             setExploreTabActive(true);
+            setProfileTabActive(false);
           },
           blur: () => {
             setExploreTabActive(false);
           },
           tabPress: (e) => {
-            if (triggerReset()) {
+            if (triggerExploreReset()) {
               e.preventDefault();
             }
           },
@@ -59,6 +63,7 @@ function TabLayoutContent() {
         listeners={{
           focus: () => {
             setExploreTabActive(false);
+            setProfileTabActive(false);
           },
         }}
       />
@@ -70,7 +75,16 @@ function TabLayoutContent() {
         }}
         listeners={{
           focus: () => {
+            setProfileTabActive(true);
             setExploreTabActive(false);
+          },
+          blur: () => {
+            setProfileTabActive(false);
+          },
+          tabPress: (e) => {
+            if (triggerProfileReset()) {
+              e.preventDefault();
+            }
           },
         }}
       />
@@ -81,7 +95,9 @@ function TabLayoutContent() {
 export default function TabLayout() {
   return (
     <ExploreTabProvider>
-      <TabLayoutContent />
+      <ProfileTabProvider>
+        <TabLayoutContent />
+      </ProfileTabProvider>
     </ExploreTabProvider>
   );
 }
