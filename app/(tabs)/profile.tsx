@@ -4,7 +4,7 @@ import Octicons from "@expo/vector-icons/Octicons";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import { useRouter } from "expo-router";
-import React from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
   Animated,
@@ -78,21 +78,21 @@ const AutocompleteInput: React.FC<{
   onDropdownOpen?: () => void;
   onDropdownClose?: () => void;
 }> = ({ value, onChangeText, placeholder, suggestions, style, onFocus, onBlur, onDropdownOpen, onDropdownClose }) => {
-  const [isFocused, setIsFocused] = React.useState(false);
-  const [filteredSuggestions, setFilteredSuggestions] = React.useState<string[]>([]);
-  const fadeAnim = React.useRef(new Animated.Value(0)).current;
-  const isSelectingRef = React.useRef(false);
-  const blurTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
-  const inputRef = React.useRef<TextInput>(null);
+  const [isFocused, setIsFocused] = useState(false);
+  const [filteredSuggestions, setFilteredSuggestions] = useState<string[]>([]);
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const isSelectingRef = useRef(false);
+  const blurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const inputRef = useRef<TextInput>(null);
 
-  const cancelBlurTimeout = React.useCallback(() => {
+  const cancelBlurTimeout = useCallback(() => {
     if (blurTimeoutRef.current) {
       clearTimeout(blurTimeoutRef.current);
       blurTimeoutRef.current = null;
     }
   }, []);
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (value.trim() && isFocused) {
       const filtered = suggestions.filter((cat) => cat.toLowerCase().includes(value.toLowerCase()));
       setFilteredSuggestions(filtered);
@@ -105,7 +105,7 @@ const AutocompleteInput: React.FC<{
 
   const isDropdownVisible = isFocused && filteredSuggestions.length > 0;
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (isDropdownVisible) {
       onDropdownOpen?.();
       Animated.timing(fadeAnim, {
@@ -123,7 +123,7 @@ const AutocompleteInput: React.FC<{
     }
   }, [isDropdownVisible, fadeAnim, onDropdownOpen, onDropdownClose]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     return () => cancelBlurTimeout();
   }, [cancelBlurTimeout]);
 
@@ -793,147 +793,45 @@ const SCREEN_W = Dimensions.get("window").width;
 const SWIPE_THRESHOLD = 0.25 * SCREEN_W;
 const SWIPE_OUT_DISTANCE = 1.2 * SCREEN_W;
 const HORIZONTAL_ACTIVATION_DX = 8;
+const ANIMATION_DURATION = 200;
+const TAB_ANIMATION_DURATION = 250;
 
 export default function ProfileScreen() {
   const { signOut } = useAuth();
   const router = useRouter();
   const { registerResetCallback, unregisterResetCallback } = useProfileTabReset();
-  const [activeTab, setActiveTab] = React.useState<"questions" | "history">("questions");
-  const [myQuestions, setMyQuestions] = React.useState(MOCK_MY_QUESTIONS);
-  const [editingQuestion, setEditingQuestion] = React.useState<Question | null>(null);
-  const [editTitle, setEditTitle] = React.useState("");
-  const [editPrompt, setEditPrompt] = React.useState("");
-  const [editLeftChoice, setEditLeftChoice] = React.useState("");
-  const [editRightChoice, setEditRightChoice] = React.useState("");
-  const [editCategory, setEditCategory] = React.useState("");
-  const [isCategoryDropdownOpen, setIsCategoryDropdownOpen] = React.useState(false);
-  const [editPromptImage, setEditPromptImage] = React.useState<ImageInfo | null>(null);
-  const [editLeftImage, setEditLeftImage] = React.useState<ImageInfo | null>(null);
-  const [editRightImage, setEditRightImage] = React.useState<ImageInfo | null>(null);
-  const [viewMode, setViewMode] = React.useState<"list" | "card">("list");
-  const [cardDisplayIndex, setCardDisplayIndex] = React.useState(0);
-  const [cardOpacity, setCardOpacity] = React.useState(1);
+  const [activeTab, setActiveTab] = useState<"questions" | "history">("questions");
+  const [myQuestions, setMyQuestions] = useState(MOCK_MY_QUESTIONS);
+  const [editingQuestion, setEditingQuestion] = useState<Question | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editPrompt, setEditPrompt] = useState("");
+  const [editLeftChoice, setEditLeftChoice] = useState("");
+  const [editRightChoice, setEditRightChoice] = useState("");
+  const [editCategory, setEditCategory] = useState("");
+  const [isCategoryDropdownOpen, setIsCategoryDropdownOpen] = useState(false);
+  const [editPromptImage, setEditPromptImage] = useState<ImageInfo | null>(null);
+  const [editLeftImage, setEditLeftImage] = useState<ImageInfo | null>(null);
+  const [editRightImage, setEditRightImage] = useState<ImageInfo | null>(null);
+  const [viewMode, setViewMode] = useState<"list" | "card">("list");
+  const [cardDisplayIndex, setCardDisplayIndex] = useState(0);
+  const [cardOpacity, setCardOpacity] = useState(1);
 
-  const cardPosition = React.useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
-  const cardEntryScale = React.useRef(new Animated.Value(1)).current;
+  const cardPosition = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
+  const cardEntryScale = useRef(new Animated.Value(1)).current;
 
-  const translateX = React.useRef(new Animated.Value(0)).current;
-  const activeTabIndex = activeTab === "questions" ? 0 : 1;
   const screenWidth = Dimensions.get("window").width;
-  const swipeThreshold = screenWidth * 0.2;
-  const horizontalActivationDx = 20;
-  const [isSwiping, setIsSwiping] = React.useState(false);
-  const tabIndicatorPosition = React.useRef(new Animated.Value(0)).current;
-  const currentTranslateX = React.useRef(0);
+  const tabIndicatorPosition = useRef(new Animated.Value(activeTab === "questions" ? 0 : 1)).current;
   const tabContainerInnerWidth = screenWidth - 48 - 2 - 8;
   const tabIndicatorWidth = tabContainerInnerWidth / 2;
-  React.useEffect(() => {
-    if (!isSwiping) {
-      const targetX = activeTabIndex === 0 ? 0 : -screenWidth;
-      currentTranslateX.current = targetX;
-      Animated.timing(translateX, {
-        toValue: targetX,
-        useNativeDriver: true,
-        duration: 250,
-        easing: Easing.out(Easing.cubic),
-      }).start();
-      
-      Animated.timing(tabIndicatorPosition, {
-        toValue: activeTabIndex,
-        useNativeDriver: false,
-        duration: 250,
-        easing: Easing.out(Easing.cubic),
-      }).start();
-    }
-  }, [activeTabIndex, translateX, screenWidth, isSwiping, tabIndicatorPosition]);
-
-  React.useEffect(() => {
-    const listenerId = translateX.addListener(({ value }) => {
-      currentTranslateX.current = value;
-      const normalizedPosition = Math.max(0, Math.min(1, -value / screenWidth));
-      tabIndicatorPosition.setValue(normalizedPosition);
-    });
-
-    return () => {
-      translateX.removeListener(listenerId);
-    };
-  }, [translateX, screenWidth, tabIndicatorPosition]);
-
-  const panResponder = React.useMemo(
-    () =>
-      PanResponder.create({
-        onStartShouldSetPanResponder: () => false,
-        onStartShouldSetPanResponderCapture: (_, gesture) => {
-          const dx = Math.abs(gesture.dx || 0);
-          const dy = Math.abs(gesture.dy || 0);
-          return dx > dy && dx > horizontalActivationDx;
-        },
-        onMoveShouldSetPanResponder: (_, gesture) => {
-          const dx = Math.abs(gesture.dx);
-          const dy = Math.abs(gesture.dy);
-          if (dy > dx) return false;
-          return dx > horizontalActivationDx;
-        },
-        onPanResponderGrant: () => {
-          setIsSwiping(true);
-        },
-        onPanResponderMove: (_, gesture) => {
-          const newX = currentTranslateX.current + gesture.dx;
-          const clampedX = Math.max(-screenWidth, Math.min(0, newX));
-          translateX.setValue(clampedX);
-        },
-        onPanResponderRelease: (_, gesture) => {
-          setIsSwiping(false);
-          const velocity = gesture.vx;
-          
-          const currentPos = currentTranslateX.current + gesture.dx;
-          const normalizedPos = -currentPos / screenWidth;
-
-          let targetTabIndex = activeTabIndex;
-          
-          if (normalizedPos > 0.5) {
-            targetTabIndex = 1;
-          } else if (normalizedPos < 0.5) {
-            targetTabIndex = 0;
-          }
-          
-          if (Math.abs(gesture.dx) > swipeThreshold || Math.abs(velocity) > 0.3) {
-            if (gesture.dx > 0 && activeTabIndex === 1) {
-              targetTabIndex = 0;
-            } else if (gesture.dx < 0 && activeTabIndex === 0) {
-              targetTabIndex = 1;
-            }
-          }
-
-          const targetX = targetTabIndex * -screenWidth;
-          Animated.timing(translateX, {
-            toValue: targetX,
-            useNativeDriver: true,
-            duration: 200,
-            easing: Easing.out(Easing.cubic),
-          }).start(() => {
-            currentTranslateX.current = targetX;
-            if (targetTabIndex !== activeTabIndex) {
-              setActiveTab(targetTabIndex === 0 ? "questions" : "history");
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            }
-          });
-        },
-        onPanResponderTerminate: () => {
-          setIsSwiping(false);
-          const targetX = activeTabIndex * -screenWidth;
-          Animated.timing(translateX, {
-            toValue: targetX,
-            useNativeDriver: true,
-            duration: 200,
-            easing: Easing.out(Easing.cubic),
-          }).start(() => {
-            currentTranslateX.current = targetX;
-          });
-        },
-      }),
-    [activeTabIndex, translateX, screenWidth, swipeThreshold, horizontalActivationDx]
-  );
+  
+  useEffect(() => {
+    Animated.timing(tabIndicatorPosition, {
+      toValue: activeTab === "questions" ? 0 : 1,
+      useNativeDriver: false,
+      duration: TAB_ANIMATION_DURATION,
+      easing: Easing.out(Easing.cubic),
+    }).start();
+  }, [activeTab, tabIndicatorPosition]);
 
   const handleSignOut = () => {
     Alert.alert("Sign Out", "Are you sure you want to sign out?", [
@@ -983,6 +881,18 @@ export default function ProfileScreen() {
     }
   };
 
+  const clearEditState = useCallback(() => {
+    setEditingQuestion(null);
+    setEditTitle("");
+    setEditPrompt("");
+    setEditLeftChoice("");
+    setEditRightChoice("");
+    setEditCategory("");
+    setEditPromptImage(null);
+    setEditLeftImage(null);
+    setEditRightImage(null);
+  }, []);
+
   const handleEditQuestion = (question: Question) => {
     setEditingQuestion(question);
     setEditTitle(question.title);
@@ -1024,32 +934,14 @@ export default function ProfileScreen() {
             : q
         )
       );
-      setEditingQuestion(null);
-      setEditTitle("");
-      setEditPrompt("");
-      setEditLeftChoice("");
-      setEditRightChoice("");
-      setEditCategory("");
-      setEditPromptImage(null);
-      setEditLeftImage(null);
-      setEditRightImage(null);
+      clearEditState();
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     } else {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     }
   };
 
-  const handleCancelEdit = React.useCallback(() => {
-    setEditingQuestion(null);
-    setEditTitle("");
-    setEditPrompt("");
-    setEditLeftChoice("");
-    setEditRightChoice("");
-    setEditCategory("");
-    setEditPromptImage(null);
-    setEditLeftImage(null);
-    setEditRightImage(null);
-  }, []);
+  const handleCancelEdit = clearEditState;
 
   const handleDeleteQuestion = (questionId: string) => {
     Alert.alert("Delete Question", "Are you sure you want to delete this question?", [
@@ -1077,53 +969,54 @@ export default function ProfileScreen() {
     }
   };
 
-  const handleBackToList = React.useCallback(() => {
+  const handleBackToList = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setViewMode("list");
     cardPosition.setValue({ x: 0, y: 0 });
   }, [cardPosition]);
 
-  const resetToRoot = React.useCallback(() => {
+  const resetToRoot = useCallback(() => {
     if (viewMode === "card") {
       handleBackToList();
       return true;
     }
     if (editingQuestion) {
-      handleCancelEdit();
+      clearEditState();
       return true;
     }
     return false;
-  }, [viewMode, editingQuestion, handleBackToList, handleCancelEdit]);
+  }, [viewMode, editingQuestion, handleBackToList, clearEditState]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     registerResetCallback(resetToRoot);
     return () => unregisterResetCallback();
   }, [registerResetCallback, unregisterResetCallback, resetToRoot]);
 
-  const resetCard = React.useCallback(() => {
+  const resetCard = useCallback(() => {
     Animated.timing(cardPosition, {
       toValue: { x: 0, y: 0 },
       useNativeDriver: false,
-      duration: 200,
+      duration: ANIMATION_DURATION,
       easing: Easing.out(Easing.cubic),
     }).start();
   }, [cardPosition]);
 
-  const navigateCard = React.useCallback(
+  const getQuestionsForTab = useCallback(() => {
+    return activeTab === "questions" 
+      ? myQuestions 
+      : MOCK_VOTE_HISTORY.map((item) => {
+          const q = myQuestions.find((q) => q.id === item.questionId);
+          return q || myQuestions[0];
+        });
+  }, [activeTab, myQuestions]);
+
+  const navigateCard = useCallback(
     (direction: "left" | "right") => {
-      const questions = activeTab === "questions" ? myQuestions : MOCK_VOTE_HISTORY.map((item) => {
-        const q = myQuestions.find((q) => q.id === item.questionId);
-        return q || myQuestions[0];
-      });
+      const questions = getQuestionsForTab();
       const isFirst = cardDisplayIndex === 0;
       const isLast = cardDisplayIndex === questions.length - 1;
 
-      if (direction === "right" && isFirst) {
-        resetCard();
-        return;
-      }
-
-      if (direction === "left" && isLast) {
+      if ((direction === "right" && isFirst) || (direction === "left" && isLast)) {
         resetCard();
         return;
       }
@@ -1135,17 +1028,17 @@ export default function ProfileScreen() {
       setCardOpacity(0);
       setCardDisplayIndex(nextIdx);
     },
-    [cardDisplayIndex, activeTab, myQuestions, resetCard]
+    [cardDisplayIndex, getQuestionsForTab, resetCard]
   );
 
-  const forceSwipe = React.useCallback(
+  const forceSwipe = useCallback(
     (direction: "left" | "right") => {
       const x = direction === "right" ? SWIPE_OUT_DISTANCE : -SWIPE_OUT_DISTANCE;
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
       Animated.timing(cardPosition, {
         toValue: { x, y: 0 },
-        duration: 200,
+        duration: ANIMATION_DURATION,
         useNativeDriver: false,
       }).start(() => {
         navigateCard(direction);
@@ -1154,7 +1047,7 @@ export default function ProfileScreen() {
     [cardPosition, navigateCard]
   );
 
-  const cardPanResponder = React.useMemo(
+  const cardPanResponder = useMemo(
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: () => false,
@@ -1183,7 +1076,7 @@ export default function ProfileScreen() {
     [resetCard, forceSwipe, cardPosition]
   );
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (viewMode === "card") {
       cardPosition.setValue({ x: 0, y: 0 });
       cardEntryScale.setValue(0.98);
@@ -1192,7 +1085,7 @@ export default function ProfileScreen() {
         setCardOpacity(1);
         Animated.timing(cardEntryScale, {
           toValue: 1,
-          duration: 200,
+          duration: ANIMATION_DURATION,
           easing: Easing.out(Easing.cubic),
           useNativeDriver: false,
         }).start();
@@ -1200,7 +1093,7 @@ export default function ProfileScreen() {
     }
   }, [cardDisplayIndex, cardEntryScale, cardPosition, viewMode]);
 
-  React.useEffect(() => {
+  useEffect(() => {
     const listenerId = cardPosition.x.addListener(({ value }) => {
       const absDx = Math.abs(value);
       if (absDx >= SWIPE_OUT_DISTANCE * 0.8) {
@@ -1238,10 +1131,7 @@ export default function ProfileScreen() {
   };
 
   if (viewMode === "card") {
-    const questions = activeTab === "questions" ? myQuestions : MOCK_VOTE_HISTORY.map((item) => {
-      const q = myQuestions.find((q) => q.id === item.questionId);
-      return q || myQuestions[0];
-    });
+    const questions = getQuestionsForTab();
     const question = questions[cardDisplayIndex] ?? null;
 
     if (!question) {
@@ -1563,7 +1453,7 @@ export default function ProfileScreen() {
       <ScrollView
         contentContainerStyle={{ paddingBottom: 24 }}
         showsVerticalScrollIndicator={false}
-        scrollEnabled={!isSwiping && !isCategoryDropdownOpen}
+          scrollEnabled={!isCategoryDropdownOpen}
         keyboardShouldPersistTaps="always"
       >
         <ProfileHeader onEditPress={handleEditProfile} onSignOut={handleSignOut} stats={MOCK_USER_STATS} />
@@ -1657,16 +1547,8 @@ export default function ProfileScreen() {
           </View>
 
           <View style={{ overflow: "hidden", marginHorizontal: -24 }}>
-            <Animated.View
-              style={{
-                flexDirection: "row",
-                width: screenWidth * 2,
-                transform: [{ translateX }],
-              }}
-              {...panResponder.panHandlers}
-            >
-              {/* My Questions Tab */}
-              <View style={{ width: screenWidth, paddingHorizontal: 24 }}>
+            {activeTab === "questions" ? (
+              <View style={{ paddingHorizontal: 24 }}>
                 {myQuestions.length > 0 ? (
                   myQuestions.map((question) => {
                     if (editingQuestion && editingQuestion.id === question.id) {
@@ -2019,8 +1901,8 @@ export default function ProfileScreen() {
                   </View>
                 )}
               </View>
-
-              <View style={{ width: screenWidth, paddingHorizontal: 24 }}>
+            ) : (
+              <View style={{ paddingHorizontal: 24 }}>
                 {MOCK_VOTE_HISTORY.length > 0 ? (
                   MOCK_VOTE_HISTORY.map((item) => {
                     const question = myQuestions.find((q) => q.id === item.questionId);
@@ -2040,7 +1922,7 @@ export default function ProfileScreen() {
                   </View>
                 )}
               </View>
-            </Animated.View>
+            )}
           </View>
         </View>
       </ScrollView>
