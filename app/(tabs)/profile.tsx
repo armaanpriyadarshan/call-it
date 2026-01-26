@@ -20,31 +20,10 @@ import {
   TextInput,
   View,
 } from "react-native";
+import type { Question, User, VoteHistoryItem, ImageInfo } from "@/types";
+import { getNormalizedPercentages } from "@/utils/voting";
+import { formatDate } from "@/utils/date";
 
-type Question = {
-  id: string;
-  title: string;
-  prompt: string;
-  promptImageUrl?: string;
-  left: { id: "left"; label: string; imageUrl?: string };
-  right: { id: "right"; label: string; imageUrl?: string };
-  votes?: { left: number; right: number };
-  meta?: { category?: string; createdBy?: string };
-  createdAt: string;
-};
-
-type VoteHistoryItem = {
-  questionId: string;
-  questionTitle: string;
-  direction: "left" | "right";
-  votedAt: string;
-};
-
-type ImageInfo = {
-  uri: string;
-  width?: number;
-  height?: number;
-};
 
 const SUGGESTED_CATEGORIES = [
   "Style",
@@ -223,13 +202,6 @@ const AutocompleteInput: React.FC<{
   );
 };
 
-type User = {
-  id: string;
-  username: string;
-  firstName?: string;
-  lastName?: string;
-  avatarUrl?: string;
-};
 
 const MOCK_USER_STATS = {
   questionsCreated: 12,
@@ -255,39 +227,7 @@ const MOCK_FOLLOWING: User[] = Array.from({ length: 64 }, (_, i) => ({
   avatarUrl: i % 6 === 0 ? undefined : `https://i.pravatar.cc/150?img=${(i % 70) + 1}`,
 }));
 
-const formatDate = (dateString: string): string => {
-  const date = new Date(dateString);
-  const now = new Date();
-  const currentYear = now.getFullYear();
-  const dateYear = date.getFullYear();
-  
-  const month = date.toLocaleDateString("en-US", { month: "long" });
-  const day = date.getDate();
-  
-  if (dateYear === currentYear) {
-    return `${month} ${day}`;
-  }
-  return `${month} ${day}, ${dateYear}`;
-};
 
-const calculatePercentage = (votes: number, total: number) => (total > 0 ? (votes / total) * 100 : 0);
-
-const getNormalizedPercentages = (leftVotes: number, rightVotes: number, total: number) => {
-  if (total === 0) return { left: 0, right: 0 };
-
-  const left = calculatePercentage(leftVotes, total);
-  const right = calculatePercentage(rightVotes, total);
-  const leftRounded = Math.round(left);
-  const rightRounded = Math.round(right);
-  const sum = leftRounded + rightRounded;
-
-  if (sum !== 100) {
-    return leftRounded >= rightRounded
-      ? { left: leftRounded + (100 - sum), right: rightRounded }
-      : { left: leftRounded, right: rightRounded + (100 - sum) };
-  }
-  return { left: leftRounded, right: rightRounded };
-};
 
 const MOCK_MY_QUESTIONS: Question[] = [
   {

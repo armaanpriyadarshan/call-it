@@ -1,4 +1,3 @@
-import Octicons from "@expo/vector-icons/Octicons";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import React from "react";
@@ -12,34 +11,9 @@ import {
   Text,
   View,
 } from "react-native";
-
-type Choice = {
-  id: "left" | "right";
-  label: string;
-  imageUrl?: string;
-};
-
-type Question = {
-  id: string;
-  title: string;
-  prompt: string;
-  promptImageUrl?: string;
-  left: Choice;
-  right: Choice;
-  votes?: {
-    left: number;
-    right: number;
-  };
-  meta?: {
-    category?: string;
-    createdBy?: string;
-  };
-};
-
-type VoteHistoryItem = {
-  questionIndex: number;
-  direction: "left" | "right";
-};
+import type { Question, VoteHistoryItem } from "@/types";
+import { ActionButton, ChoiceOption } from "@/components/voting";
+import { getNormalizedPercentages } from "@/utils/voting";
 
 const SAMPLE_QUESTIONS: Question[] = [
   {
@@ -102,203 +76,6 @@ const SWIPE_THRESHOLD = 0.25 * SCREEN_W;
 const SWIPE_OUT_DISTANCE = 1.2 * SCREEN_W;
 const HORIZONTAL_ACTIVATION_DX = 8;
 
-const calculatePercentage = (votes: number, total: number) => (total > 0 ? (votes / total) * 100 : 0);
-
-const ActionButton: React.FC<{
-  onPress: () => void;
-  icon: keyof typeof Octicons.glyphMap;
-  label: string;
-}> = ({ onPress, icon, label }) => (
-  <Pressable
-    onPress={onPress}
-    style={({ pressed }) => ({
-      paddingHorizontal: 16,
-      paddingVertical: 12,
-      borderRadius: 12,
-      borderWidth: 1,
-      borderColor: pressed ? "#333" : "transparent",
-      backgroundColor: pressed ? "#1c1c1c" : "transparent",
-      minWidth: 60,
-      alignItems: "center",
-      justifyContent: "center",
-    })}
-  >
-    <View style={{ alignItems: "center", justifyContent: "center" }}>
-      <Octicons name={icon} size={24} color="#aaa" />
-      <Text style={{ color: "#aaa", fontSize: 12, marginTop: 4, fontWeight: "500" }}>{label}</Text>
-    </View>
-  </Pressable>
-);
-
-const PlusOneBadge: React.FC<{ opacity: number; position: "left" | "right" }> = ({ opacity, position }) => (
-  <View
-    style={{
-      position: "absolute",
-      top: 0,
-      [position]: 0,
-      backgroundColor: "white",
-      borderRadius: 8,
-      paddingHorizontal: 8,
-      paddingVertical: 4,
-      zIndex: 2,
-      opacity,
-    }}
-  >
-    <Text style={{ color: "black", fontSize: 12, fontWeight: "700" }}>+1</Text>
-  </View>
-);
-
-const PercentageBar: React.FC<{
-  width: number;
-  opacity: number;
-  isSelected: boolean;
-  position: "left" | "right";
-}> = ({ width, opacity, isSelected, position }) => (
-  <View
-    style={{
-      position: "absolute",
-      [position]: 0,
-      top: 0,
-      bottom: 0,
-      width: `${width}%`,
-      backgroundColor: isSelected ? "rgba(255, 255, 255, 0.25)" : "rgba(255, 255, 255, 0.15)",
-      borderRadius: 18,
-      opacity,
-    }}
-  />
-);
-
-const VoteDisplay: React.FC<{
-  percentage: number;
-  votes: number;
-  isSelected: boolean;
-  swipeProgress: number;
-  align: "left" | "right";
-}> = ({ percentage, votes, isSelected, swipeProgress, align }) => (
-  <View
-    style={{
-      alignItems: align === "right" ? "flex-end" : "flex-start",
-      minWidth: 65,
-      opacity: swipeProgress,
-    }}
-  >
-    <Text
-      style={{
-        color: isSelected ? "#ddd" : "#aaa",
-        fontSize: 14,
-        fontWeight: "600",
-      }}
-    >
-      {swipeProgress > 0 ? `${Math.round(percentage)}%` : "0%"}
-    </Text>
-    <Text
-      style={{
-        color: isSelected ? "#ddd" : "#aaa",
-        fontSize: 12,
-        fontWeight: "500",
-      }}
-    >
-      ({votes} {votes === 1 ? "vote" : "votes"})
-    </Text>
-  </View>
-);
-
-const ChoiceOption: React.FC<{
-  choice: Choice;
-  direction: "left" | "right";
-  percentage: number;
-  votes: number;
-  swipeProgress: number;
-  swipeDirection: "left" | "right" | null;
-  isSelected: boolean;
-  highlight: number;
-}> = ({ choice, direction, percentage, votes, swipeProgress, swipeDirection, isSelected, highlight }) => {
-  const isRight = direction === "right";
-  const showPlusOne = swipeDirection === direction && swipeProgress > 0;
-
-  return (
-    <View
-      style={{
-        borderRadius: 18,
-        borderWidth: 1 + highlight * 2,
-        borderColor:
-          highlight > 0
-            ? isSelected
-              ? "rgba(255, 255, 255, 0.25)"
-              : `rgba(255, 255, 255, ${0.12 + highlight * 0.06})`
-            : "#333",
-        backgroundColor: "#1c1c1c",
-        overflow: "hidden",
-      }}
-    >
-      <View style={{ position: "relative", padding: 12 }}>
-        {swipeProgress > 0 && (
-          <PercentageBar
-            width={percentage}
-            opacity={swipeProgress}
-            isSelected={isSelected}
-            position={isRight ? "right" : "left"}
-          />
-        )}
-
-        <View style={{ position: "relative", zIndex: 1 }}>
-          {showPlusOne && <PlusOneBadge opacity={swipeProgress} position={isRight ? "left" : "right"} />}
-
-          <Text
-            style={{
-              color: "#aaa",
-              fontSize: 12,
-              marginBottom: 8,
-              textAlign: isRight ? "right" : "left",
-            }}
-          >
-            SWIPE {direction.toUpperCase()}
-          </Text>
-
-          <View
-            style={{
-              flexDirection: isRight ? "row-reverse" : "row",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 12,
-            }}
-          >
-            <View
-              style={{
-                flexDirection: isRight ? "row-reverse" : "row",
-                alignItems: "center",
-                gap: 12,
-                flex: 1,
-              }}
-            >
-              {choice.imageUrl && (
-                <Image source={{ uri: choice.imageUrl }} style={{ width: 44, height: 44, borderRadius: 12 }} />
-              )}
-              <Text
-                style={{
-                  color: isSelected ? "#fff" : "white",
-                  fontSize: 16,
-                  fontWeight: "700",
-                  textAlign: isRight ? "right" : "left",
-                }}
-              >
-                {choice.label}
-              </Text>
-            </View>
-
-            <VoteDisplay
-              percentage={percentage}
-              votes={votes}
-              isSelected={isSelected}
-              swipeProgress={swipeProgress}
-              align={isRight ? "left" : "right"}
-            />
-          </View>
-        </View>
-      </View>
-    </View>
-  );
-};
 
 export default function HomeScreen() {
   const router = useRouter();
@@ -528,24 +305,6 @@ export default function HomeScreen() {
   
   const totalPreviewVotes = previewVotes.left + previewVotes.right;
   
-  const getNormalizedPercentages = (leftVotes: number, rightVotes: number, total: number) => {
-    if (total === 0) return { left: 0, right: 0 };
-    
-    const left = calculatePercentage(leftVotes, total);
-    const right = calculatePercentage(rightVotes, total);
-    const leftRounded = Math.round(left);
-    const rightRounded = Math.round(right);
-    const sum = leftRounded + rightRounded;
-    
-    if (sum !== 100) {
-      if (leftRounded >= rightRounded) {
-        return { left: leftRounded + (100 - sum), right: rightRounded };
-      } else {
-        return { left: leftRounded, right: rightRounded + (100 - sum) };
-      }
-    }
-    return { left: leftRounded, right: rightRounded };
-  };
   
   let leftPercentage: number;
   let rightPercentage: number;
