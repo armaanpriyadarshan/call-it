@@ -201,8 +201,6 @@ const AutocompleteInput: React.FC<{
     </View>
   );
 };
-
-
 const MOCK_USER_STATS = {
   questionsCreated: 12,
   totalVotesCast: 47,
