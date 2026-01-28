@@ -26,22 +26,22 @@ export const ChoiceOption: React.FC<{
         borderColor:
           highlight > 0
             ? isSelected
-              ? "rgba(255, 255, 255, 0.25)"
-              : `rgba(255, 255, 255, ${0.12 + highlight * 0.06})`
+              ? "rgba(255, 255, 255, 0.5)"
+              : `rgba(255, 255, 255, ${0.15 + highlight * 0.1})`
             : "#333",
         backgroundColor: "#1c1c1c",
         overflow: "hidden",
       }}
     >
+      {swipeProgress > 0 && (
+        <PercentageBar
+          width={percentage}
+          opacity={swipeProgress}
+          isSelected={isSelected}
+          position={isRight ? "right" : "left"}
+        />
+      )}
       <View style={{ position: "relative", padding: 12 }}>
-        {swipeProgress > 0 && (
-          <PercentageBar
-            width={percentage}
-            opacity={swipeProgress}
-            isSelected={isSelected}
-            position={isRight ? "right" : "left"}
-          />
-        )}
 
         <View style={{ position: "relative", zIndex: 1 }}>
           {showPlusOne && <PlusOneBadge opacity={swipeProgress} position={isRight ? "left" : "right"} />}

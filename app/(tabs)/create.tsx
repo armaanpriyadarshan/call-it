@@ -1,21 +1,26 @@
+import { useAuth, useUser } from "@clerk/clerk-expo";
 import Octicons from "@expo/vector-icons/Octicons";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
 import { useFocusEffect } from "expo-router";
 import React from "react";
 import {
-    Animated,
-    Image,
-    Keyboard,
-    KeyboardAvoidingView,
-    Platform,
-    Pressable,
-    ScrollView,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    View,
+  Animated,
+  Image,
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from "react-native";
+
+import { createQuestion } from "@/lib/queries/questions";
+import { uploadQuestionImage } from "@/lib/storage";
+import { createClerkSupabaseClient } from "@/lib/supabase";
 
 type ImageInfo = {
   uri: string;
@@ -315,6 +320,9 @@ const SuccessScreen: React.FC<{
 );
 
 export default function CreatePostScreen() {
+  const { getToken } = useAuth();
+  const { user } = useUser();
+
   const [title, setTitle] = React.useState("");
   const [prompt, setPrompt] = React.useState("");
   const [leftChoice, setLeftChoice] = React.useState("");
@@ -418,7 +426,7 @@ export default function CreatePostScreen() {
     setSubmitted(true);
     Keyboard.dismiss();
 
-    if (!formOk) {
+    if (!formOk || !user) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       return;
     }
@@ -427,17 +435,45 @@ export default function CreatePostScreen() {
       setBusy(true);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      const supabase = createClerkSupabaseClient({ getToken });
+
+      let promptImageUrl: string | null = null;
+      let leftImageUrl: string | null = null;
+      let rightImageUrl: string | null = null;
+
+      if (promptImage) {
+        promptImageUrl = await uploadQuestionImage(supabase, user.id, promptImage.uri);
+      }
+      if (leftImage) {
+        leftImageUrl = await uploadQuestionImage(supabase, user.id, leftImage.uri);
+      }
+      if (rightImage) {
+        rightImageUrl = await uploadQuestionImage(supabase, user.id, rightImage.uri);
+      }
+
+      await createQuestion(supabase, {
+        user_id: user.id,
+        title: title.trim(),
+        prompt: prompt.trim(),
+        left_choice_label: leftChoice.trim(),
+        right_choice_label: rightChoice.trim(),
+        category: category.trim() || null,
+        prompt_image_url: promptImageUrl,
+        left_choice_image_url: leftImageUrl,
+        right_choice_image_url: rightImageUrl,
+        is_anonymous: isAnonymous,
+      });
 
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       resetForm();
       setShowSuccess(true);
-    } catch {
+    } catch (err) {
+      console.error("Failed to create question:", err);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setBusy(false);
     }
-  }, [formOk, resetForm]);
+  }, [formOk, user, getToken, title, prompt, leftChoice, rightChoice, category, promptImage, leftImage, rightImage, isAnonymous, resetForm]);
 
   const handleDismissSuccess = React.useCallback(() => {
     setShowSuccess(false);

@@ -1,26 +1,26 @@
+import { QuestionCard } from "@/components/questions";
+import { AutocompleteItem, RecentSearchItem, SearchBar, SearchFilterTab } from "@/components/search";
+import { UserSearchCard } from "@/components/users";
+import { ActionButton, ChoiceOption } from "@/components/voting";
 import { useExploreTabReset } from "@/contexts/explore-tab-context";
+import type { Question, User, VoteHistoryItem } from "@/types";
+import { calculateVoteData } from "@/utils/voting";
 import Octicons from "@expo/vector-icons/Octicons";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import React from "react";
 import {
-    Animated,
-    Dimensions,
-    FlatList,
-    Image,
-    PanResponder,
-    Pressable,
-    ScrollView,
-    Text,
-    TextInput,
-    View,
+  Animated,
+  Dimensions,
+  FlatList,
+  Image,
+  PanResponder,
+  Pressable,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
-import type { Question, User, VoteHistoryItem } from "@/types";
-import { ActionButton, ChoiceOption } from "@/components/voting";
-import { QuestionCard } from "@/components/questions";
-import { UserSearchCard } from "@/components/users";
-import { SearchBar, SearchFilterTab, RecentSearchItem, AutocompleteItem } from "@/components/search";
-import { getNormalizedPercentages, calculateVoteData } from "@/utils/voting";
 
 const SAMPLE_USERS: User[] = [
   { id: "u1", username: "fashionista", questionsCount: 24, followersCount: 1520, avatarUrl: `https://i.pravatar.cc/150?img=${1}` },

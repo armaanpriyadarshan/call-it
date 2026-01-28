@@ -15,7 +15,7 @@ export const PercentageBar: React.FC<{
       bottom: 0,
       width: `${width}%`,
       backgroundColor: isSelected ? "rgba(255, 255, 255, 0.25)" : "rgba(255, 255, 255, 0.15)",
-      borderRadius: 18,
+      borderRadius: 14,
       opacity,
     }}
   />

@@ -7,11 +7,14 @@ import { Colors } from '@/constants/theme';
 import { ExploreTabProvider, useExploreTabReset } from '@/contexts/explore-tab-context';
 import { ProfileTabProvider, useProfileTabReset } from '@/contexts/profile-tab-context';
 import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useEnsureProfile } from '@/hooks/use-ensure-profile';
 
 function TabLayoutContent() {
   const colorScheme = useColorScheme();
   const { triggerReset: triggerExploreReset, setExploreTabActive } = useExploreTabReset();
   const { triggerReset: triggerProfileReset, setProfileTabActive } = useProfileTabReset();
+
+  useEnsureProfile();
 
   return (
     <Tabs
