@@ -13,7 +13,7 @@ import type { Question, VoteHistoryItem } from "@/types";
 import { getNormalizedPercentages } from "@/utils/voting";
 import { useAuth, useUser } from "@clerk/clerk-expo";
 import * as Haptics from "expo-haptics";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import React from "react";
 import {
     ActivityIndicator,
@@ -237,6 +237,40 @@ export default function HomeScreen() {
 
   useRealtimeVoteCounts(supabase, questionIds, refreshVoteCounts);
 
+  // Remove questions that were voted on in other tabs
+  const syncAndRemoveVotedQuestions = React.useCallback(async () => {
+    const currentUser = userRef.current;
+    if (!currentUser || questions.length === 0) return;
+
+    const supabase = getSupabase();
+    const ids = questions.map((q) => q.id);
+    const userVotesMap = await getUserVotes(supabase, currentUser.id, ids);
+
+    const votedIds = new Set(userVotesMap.keys());
+    const hasVotedQuestions = ids.some((id) => votedIds.has(id));
+
+    if (hasVotedQuestions) {
+      setQuestions((prev) => {
+        const filtered = prev.filter((q) => !votedIds.has(q.id));
+        return filtered;
+      });
+      // Reset display index if needed
+      setDisplayIndex((prev) => {
+        const newQuestions = questions.filter((q) => !votedIds.has(q.id));
+        if (prev >= newQuestions.length) {
+          return Math.max(0, newQuestions.length - 1);
+        }
+        return prev;
+      });
+    }
+  }, [questions]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      syncAndRemoveVotedQuestions();
+    }, [syncAndRemoveVotedQuestions]),
+  );
+
   const actionsRef = React.useRef({
     recordVote: (_direction: "left" | "right") => {},
     advance: (_direction: "left" | "right" | null) => {},
@@ -408,11 +442,12 @@ export default function HomeScreen() {
       return updated;
     });
 
-    if (lastVote.questionId && !wasVotedBeforeSession) {
+    const questionId = lastVote.questionId;
+    if (questionId && !wasVotedBeforeSession) {
       const supabase = getSupabase();
-      deleteVote(supabase, lastVote.questionId, currentUser.id)
+      deleteVote(supabase, questionId, currentUser.id)
         .then(() => {
-          refreshVoteCounts(lastVote.questionId);
+          refreshVoteCounts(questionId);
         })
         .catch((err) => {
           console.error("Failed to delete vote:", err);
