@@ -3,139 +3,63 @@ import { AutocompleteItem, RecentSearchItem, SearchBar, SearchFilterTab } from "
 import { UserSearchCard } from "@/components/users";
 import { ActionButton, ChoiceOption } from "@/components/voting";
 import { useExploreTabReset } from "@/contexts/explore-tab-context";
+import { createClerkSupabaseClient } from "@/lib/supabase";
+import { getQuestions, Question as DbQuestion } from "@/lib/queries/questions";
+import { getVoteCounts } from "@/lib/queries/votes";
+import { getProfile } from "@/lib/queries/profiles";
 import type { Question, User, VoteHistoryItem } from "@/types";
 import { calculateVoteData } from "@/utils/voting";
+import { useAuth, useUser } from "@clerk/clerk-expo";
 import Octicons from "@expo/vector-icons/Octicons";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import React from "react";
 import {
+  ActivityIndicator,
   Animated,
   Dimensions,
   FlatList,
   Image,
   PanResponder,
   Pressable,
+  RefreshControl,
   ScrollView,
   Text,
   TextInput,
   View,
 } from "react-native";
 
-const SAMPLE_USERS: User[] = [
-  { id: "u1", username: "fashionista", questionsCount: 24, followersCount: 1520, avatarUrl: `https://i.pravatar.cc/150?img=${1}` },
-  { id: "u2", username: "careercoach", questionsCount: 18, followersCount: 3200, avatarUrl: `https://i.pravatar.cc/150?img=${2}` },
-  { id: "u3", username: "foodie", questionsCount: 42, followersCount: 890, avatarUrl: `https://i.pravatar.cc/150?img=${3}` },
-  { id: "u4", username: "weekendwarrior", questionsCount: 12, followersCount: 450, avatarUrl: `https://i.pravatar.cc/150?img=${4}` },
-  { id: "u5", username: "wanderlust", questionsCount: 31, followersCount: 2100, avatarUrl: `https://i.pravatar.cc/150?img=${5}` },
-  { id: "u6", username: "fitnessguru", questionsCount: 56, followersCount: 5400, avatarUrl: `https://i.pravatar.cc/150?img=${6}` },
-  { id: "u7", username: "techie", questionsCount: 27, followersCount: 1800, avatarUrl: `https://i.pravatar.cc/150?img=${7}` },
-  { id: "u8", username: "bookworm", questionsCount: 19, followersCount: 720, avatarUrl: `https://i.pravatar.cc/150?img=${8}` },
-  { id: "u9", username: "musicfan", questionsCount: 33, followersCount: 1100, avatarUrl: `https://i.pravatar.cc/150?img=${9}` },
-  { id: "u10", username: "gamer", questionsCount: 45, followersCount: 3800, avatarUrl: `https://i.pravatar.cc/150?img=${10}` },
-];
-
 type SearchFilter = "all" | "users" | "questions";
 
-const SAMPLE_QUESTIONS: Question[] = [
-  {
-    id: "q1",
-    title: "Outfit check",
-    prompt: "Which one for dinner tonight?",
-    promptImageUrl: "https://images.unsplash.com/photo-1520975916090-3105956dac38?auto=format&fit=crop&w=1200&q=80",
+function mapDbQuestionToQuestion(
+  dbQuestion: DbQuestion,
+  votes: { left: number; right: number },
+  creatorUsername: string | null,
+  isAnonymous: boolean
+): Question {
+  return {
+    id: dbQuestion.id,
+    title: dbQuestion.title,
+    prompt: dbQuestion.prompt,
+    promptImageUrl: dbQuestion.prompt_image_url ?? undefined,
     left: {
       id: "left",
-      label: "Black dress",
-      imageUrl: "https://images.unsplash.com/photo-1643756635111-ee5b18e055dc?w=400&h=400&fit=crop",
+      label: dbQuestion.left_choice_label,
+      imageUrl: dbQuestion.left_choice_image_url ?? undefined,
     },
     right: {
       id: "right",
-      label: "Red dress",
-      imageUrl: "https://images.unsplash.com/photo-1595777457583-95e059d581b8?w=400&h=400&fit=crop",
+      label: dbQuestion.right_choice_label,
+      imageUrl: dbQuestion.right_choice_image_url ?? undefined,
     },
-    votes: { left: 12, right: 8 },
-    meta: { category: "Style", createdBy: "fashionista" },
-  },
-  {
-    id: "q2",
-    title: "Text them?",
-    prompt: "Do I double-text if they haven't replied in 24 hours?",
-    left: { id: "left", label: "No (chill)" },
-    right: { id: "right", label: "Yes (send it)" },
-    votes: { left: 45, right: 23 },
-    meta: { category: "Social", createdBy: "Anonymous" },
-  },
-  {
-    id: "q3",
-    title: "Long prompt stress test",
-    prompt: "I'm picking between two internships. Option A is a bigger brand, but the team is less aligned with what I want to do long-term. Option B is smaller, but I'll get more ownership and mentorship. I'm worried Option B won't look as strong on my resume, but I also don't want to be stuck doing boring work all summer. For context: I care about learning, actual shipping, and a team that invests in me. Which should I choose?",
-    left: { id: "left", label: "Option A (brand)" },
-    right: { id: "right", label: "Option B (growth)" },
-    votes: { left: 7, right: 15 },
-    meta: { category: "Career", createdBy: "careercoach" },
-  },
-  {
-    id: "q4",
-    title: "Food",
-    prompt: "Pick my late-night order.",
-    left: {
-      id: "left",
-      label: "Sushi",
-      imageUrl: "https://images.unsplash.com/photo-1553621042-f6e147245754?auto=format&fit=crop&w=1200&q=80",
+    votes,
+    meta: {
+      category: dbQuestion.category ?? undefined,
+      createdBy: isAnonymous ? "Anonymous" : (creatorUsername ?? "Unknown"),
     },
-    right: {
-      id: "right",
-      label: "Tacos",
-      imageUrl: "https://images.unsplash.com/photo-1552332386-f8dd00dc2f85?auto=format&fit=crop&w=1200&q=80",
-    },
-    votes: { left: 3, right: 5 },
-    meta: { category: "Food", createdBy: "foodie" },
-  },
-  {
-    id: "q5",
-    title: "Weekend plans",
-    prompt: "What should I do this weekend?",
-    left: { id: "left", label: "Stay home" },
-    right: { id: "right", label: "Go out" },
-    votes: { left: 18, right: 32 },
-    meta: { category: "Social", createdBy: "weekendwarrior" },
-  },
-  {
-    id: "q6",
-    title: "Career move",
-    prompt: "Should I take the promotion or switch companies?",
-    left: { id: "left", label: "Take promotion" },
-    right: { id: "right", label: "Switch companies" },
-    votes: { left: 25, right: 19 },
-    meta: { category: "Career", createdBy: "Anonymous" },
-  },
-  {
-    id: "q7",
-    title: "Travel destination",
-    prompt: "Where should I go for my next vacation?",
-    left: {
-      id: "left",
-      label: "Beach",
-      imageUrl: "https://images.unsplash.com/photo-1507525421304-6d5d6e4a6c8b?w=400&h=400&fit=crop",
-    },
-    right: {
-      id: "right",
-      label: "Mountains",
-      imageUrl: "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=400&h=400&fit=crop",
-    },
-    votes: { left: 42, right: 28 },
-    meta: { category: "Travel", createdBy: "wanderlust" },
-  },
-  {
-    id: "q8",
-    title: "Morning routine",
-    prompt: "What's your ideal morning?",
-    left: { id: "left", label: "Early riser" },
-    right: { id: "right", label: "Sleep in" },
-    votes: { left: 31, right: 44 },
-    meta: { category: "Health", createdBy: "fitnessguru" },
-  },
-];
+    createdAt: dbQuestion.created_at,
+  };
+}
 
 const SCREEN_W = Dimensions.get("window").width;
 const SWIPE_THRESHOLD = 0.25 * SCREEN_W;
@@ -150,12 +74,16 @@ const MAX_RECENT_SEARCHES = 10;
 export default function ExploreScreen() {
   const router = useRouter();
   const { registerResetCallback, unregisterResetCallback } = useExploreTabReset();
+  const { getToken } = useAuth();
+  const { user } = useUser();
 
   const [searchQuery, setSearchQuery] = React.useState("");
   const [searchFocused, setSearchFocused] = React.useState(false);
   const [performedSearch, setPerformedSearch] = React.useState("");
   const [recentSearches, setRecentSearches] = React.useState<string[]>([]);
-  const [questions, setQuestions] = React.useState(SAMPLE_QUESTIONS);
+  const [questions, setQuestions] = React.useState<Question[]>([]);
+  const [loading, setLoading] = React.useState(true);
+  const [refreshing, setRefreshing] = React.useState(false);
   const [viewMode, setViewMode] = React.useState<"list" | "card">("list");
   const [index, setIndex] = React.useState(0);
   const [displayIndex, setDisplayIndex] = React.useState(0);
@@ -165,7 +93,7 @@ export default function ExploreScreen() {
   const [voteHistory, setVoteHistory] = React.useState<VoteHistoryItem[]>([]);
   const [cardOpacity, setCardOpacity] = React.useState(1);
   const [searchFilter, setSearchFilter] = React.useState<SearchFilter>("all");
-  const [users] = React.useState<User[]>(SAMPLE_USERS);
+  const [users] = React.useState<User[]>([]);
 
   const position = React.useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const entryScale = React.useRef(new Animated.Value(1)).current;
@@ -173,6 +101,79 @@ export default function ExploreScreen() {
   const chevronOpacity = React.useRef(new Animated.Value(0)).current;
   const blurTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const focusedSearchInputRef = React.useRef<TextInput>(null);
+  const hasFetchedRef = React.useRef(false);
+  const supabaseRef = React.useRef<ReturnType<typeof createClerkSupabaseClient> | null>(null);
+  const getTokenRef = React.useRef(getToken);
+
+  // Keep refs in sync
+  getTokenRef.current = getToken;
+
+  const getSupabase = () => {
+    if (!supabaseRef.current) {
+      supabaseRef.current = createClerkSupabaseClient({ getToken: getTokenRef.current });
+    }
+    return supabaseRef.current;
+  };
+
+  const fetchQuestions = React.useCallback(async (isRefresh = false) => {
+    if (isRefresh) {
+      setRefreshing(true);
+    }
+
+    try {
+      const supabase = getSupabase();
+      const dbQuestions = await getQuestions(supabase, { limit: 100 });
+
+      if (dbQuestions.length === 0) {
+        setQuestions([]);
+        return;
+      }
+
+      const questionIds = dbQuestions.map((q) => q.id);
+      const voteCounts = await getVoteCounts(supabase, questionIds);
+
+      // Get unique creator IDs and fetch their profiles
+      const creatorIds = [...new Set(dbQuestions.map((q) => q.user_id))];
+      const profiles = await Promise.all(
+        creatorIds.map((id) => getProfile(supabase, id).catch(() => null))
+      );
+      const profileMap = new Map<string, string | null>();
+      creatorIds.forEach((id, i) => {
+        const profile = profiles[i];
+        let displayName: string | null = null;
+        if (profile?.username) {
+          displayName = profile.username.toLowerCase();
+        } else if (profile?.first_name) {
+          displayName = profile.first_name.toLowerCase();
+        }
+        profileMap.set(id, displayName);
+      });
+
+      const mappedQuestions = dbQuestions.map((dbQ) => {
+        const votes = voteCounts.get(dbQ.id) ?? { left: 0, right: 0 };
+        const displayName = profileMap.get(dbQ.user_id) ?? null;
+        return mapDbQuestionToQuestion(dbQ, votes, displayName, dbQ.is_anonymous);
+      });
+
+      setQuestions(mappedQuestions);
+    } catch (err) {
+      console.error("Failed to fetch questions:", err);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  // Fetch questions on mount
+  React.useEffect(() => {
+    if (!user || hasFetchedRef.current) return;
+    hasFetchedRef.current = true;
+    fetchQuestions();
+  }, [user, fetchQuestions]);
+
+  const handleRefresh = React.useCallback(() => {
+    fetchQuestions(true);
+  }, [fetchQuestions]);
 
   const clearBlurTimeout = React.useCallback(() => {
     if (blurTimeoutRef.current) {
@@ -627,8 +628,10 @@ export default function ExploreScreen() {
       chevronOpacity.setValue(0);
       return true;
     }
-    return false;
-  }, [handleBackToList, chevronWidth, chevronOpacity]);
+    // Already at root - trigger refresh
+    handleRefresh();
+    return true;
+  }, [handleBackToList, chevronWidth, chevronOpacity, handleRefresh]);
 
   React.useEffect(() => {
     registerResetCallback(resetToRoot);
@@ -638,8 +641,9 @@ export default function ExploreScreen() {
   if (viewMode === "card") {
     if (!question) {
       return (
-        <View style={{ flex: 1, backgroundColor: "black", padding: 24, justifyContent: "center" }}>
-          <Text style={{ color: "white" }}>No questions</Text>
+        <View style={{ flex: 1, backgroundColor: "black", padding: 24, justifyContent: "center", alignItems: "center" }}>
+          <Text style={{ color: "white", fontSize: 18 }}>No questions available</Text>
+          <Text style={{ color: "#aaa", fontSize: 14, marginTop: 8 }}>Check back later!</Text>
         </View>
       );
     }
@@ -1073,6 +1077,17 @@ export default function ExploreScreen() {
             )}
           </ScrollView>
         </>
+      ) : loading ? (
+        <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+          <ActivityIndicator size="large" color="white" />
+        </View>
+      ) : questions.length === 0 ? (
+        <View style={{ flex: 1, justifyContent: "center", alignItems: "center", padding: 24 }}>
+          <Text style={{ color: "white", fontSize: 18, textAlign: "center" }}>No questions yet</Text>
+          <Text style={{ color: "#aaa", fontSize: 14, marginTop: 8, textAlign: "center" }}>
+            Be the first to create one!
+          </Text>
+        </View>
       ) : (
         <FlatList
           data={questions}
@@ -1080,6 +1095,14 @@ export default function ExploreScreen() {
           renderItem={({ item }) => <QuestionCard question={item} onPress={() => handleCardPress(item)} />}
           contentContainerStyle={{ padding: 16 }}
           showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              onRefresh={handleRefresh}
+              tintColor="#fff"
+              colors={["#fff"]}
+            />
+          }
         />
       )}
     </View>
