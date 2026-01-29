@@ -1,6 +1,6 @@
+import type { Choice } from "@/types";
 import React from "react";
 import { Image, Text, View } from "react-native";
-import type { Choice } from "@/types";
 import { PercentageBar } from "./PercentageBar";
 import { PlusOneBadge } from "./PlusOneBadge";
 import { VoteDisplay } from "./VoteDisplay";
@@ -14,17 +14,35 @@ export const ChoiceOption: React.FC<{
   swipeDirection: "left" | "right" | null;
   isSelected: boolean;
   highlight: number;
-}> = ({ choice, direction, percentage, votes, swipeProgress, swipeDirection, isSelected, highlight }) => {
+  resultsMode?: boolean;
+}> = ({
+  choice,
+  direction,
+  percentage,
+  votes,
+  swipeProgress,
+  swipeDirection,
+  isSelected,
+  highlight,
+  resultsMode = false,
+}) => {
   const isRight = direction === "right";
-  const showPlusOne = swipeDirection === direction && swipeProgress > 0;
+  const showPlusOne =
+    !resultsMode && swipeDirection === direction && swipeProgress > 0;
+
+  const showBar = resultsMode || swipeProgress > 0;
+  const barOpacity = React.useMemo(() => {
+    return resultsMode ? 1 : swipeProgress;
+  }, [resultsMode, swipeProgress]);
 
   return (
     <View
       style={{
         borderRadius: 18,
-        borderWidth: 1 + highlight * 2,
-        borderColor:
-          highlight > 0
+        borderWidth: resultsMode ? 1 : 1 + highlight * 2,
+        borderColor: resultsMode
+          ? "#333"
+          : highlight > 0
             ? isSelected
               ? "rgba(255, 255, 255, 0.5)"
               : `rgba(255, 255, 255, ${0.15 + highlight * 0.1})`
@@ -33,29 +51,35 @@ export const ChoiceOption: React.FC<{
         overflow: "hidden",
       }}
     >
-      {swipeProgress > 0 && (
+      {showBar && (
         <PercentageBar
           width={percentage}
-          opacity={swipeProgress}
-          isSelected={isSelected}
+          opacity={barOpacity}
+          isSelected={resultsMode ? false : isSelected}
           position={isRight ? "right" : "left"}
         />
       )}
       <View style={{ position: "relative", padding: 12 }}>
-
         <View style={{ position: "relative", zIndex: 1 }}>
-          {showPlusOne && <PlusOneBadge opacity={swipeProgress} position={isRight ? "left" : "right"} />}
+          {showPlusOne && (
+            <PlusOneBadge
+              opacity={swipeProgress}
+              position={isRight ? "left" : "right"}
+            />
+          )}
 
-          <Text
-            style={{
-              color: "#aaa",
-              fontSize: 12,
-              marginBottom: 8,
-              textAlign: isRight ? "right" : "left",
-            }}
-          >
-            SWIPE {direction.toUpperCase()}
-          </Text>
+          {!resultsMode && (
+            <Text
+              style={{
+                color: "#aaa",
+                fontSize: 12,
+                marginBottom: 8,
+                textAlign: isRight ? "right" : "left",
+              }}
+            >
+              SWIPE {direction.toUpperCase()}
+            </Text>
+          )}
 
           <View
             style={{
@@ -74,7 +98,10 @@ export const ChoiceOption: React.FC<{
               }}
             >
               {choice.imageUrl && (
-                <Image source={{ uri: choice.imageUrl }} style={{ width: 44, height: 44, borderRadius: 12 }} />
+                <Image
+                  source={{ uri: choice.imageUrl }}
+                  style={{ width: 44, height: 44, borderRadius: 12 }}
+                />
               )}
               <Text
                 style={{
@@ -92,7 +119,7 @@ export const ChoiceOption: React.FC<{
               percentage={percentage}
               votes={votes}
               isSelected={isSelected}
-              swipeProgress={swipeProgress}
+              swipeProgress={resultsMode ? 1 : swipeProgress}
               align={isRight ? "left" : "right"}
             />
           </View>

@@ -445,20 +445,27 @@ export default function UserProfileScreen() {
       );
     }
 
+    // Check if this question should be in results mode (already voted or own question)
+    const isResultsMode = question.hasVoted || question.isOwnQuestion;
+
     const currentVotes = question.votes ?? { left: 0, right: 0 };
     const currentTotal = currentVotes.left + currentVotes.right;
-    
+
     const previewVotes = {
       left: swipeDirection === "left" ? currentVotes.left + 1 : currentVotes.left,
       right: swipeDirection === "right" ? currentVotes.right + 1 : currentVotes.right,
     };
-    
+
     const totalPreviewVotes = previewVotes.left + previewVotes.right;
-    
+
     let leftPercentage: number;
     let rightPercentage: number;
-    
-    if (swipeProgress > 0 && swipeDirection === "left") {
+
+    if (isResultsMode) {
+      const percentages = getNormalizedPercentages(currentVotes.left, currentVotes.right, currentTotal);
+      leftPercentage = percentages.left;
+      rightPercentage = percentages.right;
+    } else if (swipeProgress > 0 && swipeDirection === "left") {
       const percentages = getNormalizedPercentages(previewVotes.left, previewVotes.right, totalPreviewVotes);
       leftPercentage = percentages.left;
       rightPercentage = percentages.right;
@@ -471,12 +478,16 @@ export default function UserProfileScreen() {
       leftPercentage = percentages.left;
       rightPercentage = percentages.right;
     }
-    
-    const leftVotes = swipeProgress > 0 && swipeDirection === "left" ? previewVotes.left : currentVotes.left;
-    const rightVotes = swipeProgress > 0 && swipeDirection === "right" ? previewVotes.right : currentVotes.right;
-    
-    const leftHighlight = swipeDirection === "left" ? swipeProgress : 0;
-    const rightHighlight = swipeDirection === "right" ? swipeProgress : 0;
+
+    const leftVotes = isResultsMode
+      ? currentVotes.left
+      : swipeProgress > 0 && swipeDirection === "left" ? previewVotes.left : currentVotes.left;
+    const rightVotes = isResultsMode
+      ? currentVotes.right
+      : swipeProgress > 0 && swipeDirection === "right" ? previewVotes.right : currentVotes.right;
+
+    const leftHighlight = isResultsMode ? 0 : swipeDirection === "left" ? swipeProgress : 0;
+    const rightHighlight = isResultsMode ? 0 : swipeDirection === "right" ? swipeProgress : 0;
 
     const cardRotate = cardPosition.x.interpolate({
       inputRange: [-SCREEN_W, 0, SCREEN_W],
@@ -614,10 +625,11 @@ export default function UserProfileScreen() {
                 direction="left"
                 percentage={leftPercentage}
                 votes={leftVotes}
-                swipeProgress={swipeProgress}
-                swipeDirection={swipeDirection}
+                swipeProgress={isResultsMode ? 0 : swipeProgress}
+                swipeDirection={isResultsMode ? null : swipeDirection}
                 isSelected={swipeDirection === "left"}
                 highlight={leftHighlight}
+                resultsMode={isResultsMode}
               />
 
               <ChoiceOption
@@ -625,14 +637,19 @@ export default function UserProfileScreen() {
                 direction="right"
                 percentage={rightPercentage}
                 votes={rightVotes}
-                swipeProgress={swipeProgress}
-                swipeDirection={swipeDirection}
+                swipeProgress={isResultsMode ? 0 : swipeProgress}
+                swipeDirection={isResultsMode ? null : swipeDirection}
                 isSelected={swipeDirection === "right"}
                 highlight={rightHighlight}
+                resultsMode={isResultsMode}
               />
 
               <Text style={{ color: "#777", fontSize: 12 }}>
-                Tip: Scroll vertically in the prompt. Swipe left or right to pick.
+                {isResultsMode
+                  ? question.isOwnQuestion
+                    ? "This is your question. Swipe to see the next one."
+                    : "You've already voted. Swipe to see the next one."
+                  : "Tip: Scroll vertically in the prompt. Swipe left or right to pick."}
               </Text>
             </View>
           </Animated.View>
