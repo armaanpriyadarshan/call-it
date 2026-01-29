@@ -1,7 +1,6 @@
-import Octicons from "@expo/vector-icons/Octicons";
+import type { User } from "@/types";
 import React from "react";
 import { Image, Pressable, Text, View } from "react-native";
-import type { User } from "@/types";
 import { StatsCard } from "./StatsCard";
 
 export const UserProfileHeader: React.FC<{
@@ -17,7 +16,16 @@ export const UserProfileHeader: React.FC<{
   onFollowingPress: () => void;
   isFollowing: boolean;
   onFollowPress: () => void;
-}> = ({ user, stats, onFollowersPress, onFollowingPress, isFollowing, onFollowPress }) => {
+  isOwnProfile?: boolean;
+}> = ({
+  user,
+  stats,
+  onFollowersPress,
+  onFollowingPress,
+  isFollowing,
+  onFollowPress,
+  isOwnProfile = false,
+}) => {
   return (
     <View
       style={{
@@ -31,7 +39,15 @@ export const UserProfileHeader: React.FC<{
         justifyContent: "center",
       }}
     >
-      <View style={{ flexDirection: "row", alignItems: "stretch", marginTop: 12, marginBottom: 16, minHeight: 80 }}>
+      <View
+        style={{
+          flexDirection: "row",
+          alignItems: "stretch",
+          marginTop: 12,
+          marginBottom: 16,
+          minHeight: 80,
+        }}
+      >
         <View
           style={{
             width: 80,
@@ -54,7 +70,7 @@ export const UserProfileHeader: React.FC<{
                 height: 76,
                 borderRadius: 38,
               }}
-              resizeMode="cover"
+              resizeMode='cover'
             />
           ) : (
             <View
@@ -79,16 +95,27 @@ export const UserProfileHeader: React.FC<{
           )}
         </View>
         <View style={{ flex: 1, justifyContent: "center" }}>
-          <Text style={{ color: "white", fontSize: 20, fontWeight: "700", marginBottom: 8 }}>
-            {user.username || "User"}
+          <Text
+            style={{
+              color: "white",
+              fontSize: 20,
+              fontWeight: "700",
+              marginBottom: 8,
+            }}
+          >
+            {user.username || user.firstName || "User"}
           </Text>
           <View style={{ flexDirection: "row", gap: 16 }}>
             <Pressable onPress={onFollowersPress}>
-              <Text style={{ color: "white", fontSize: 16, fontWeight: "600" }}>{stats.followers}</Text>
+              <Text style={{ color: "white", fontSize: 16, fontWeight: "600" }}>
+                {stats.followers}
+              </Text>
               <Text style={{ color: "#aaa", fontSize: 12 }}>followers</Text>
             </Pressable>
             <Pressable onPress={onFollowingPress}>
-              <Text style={{ color: "white", fontSize: 16, fontWeight: "600" }}>{stats.following}</Text>
+              <Text style={{ color: "white", fontSize: 16, fontWeight: "600" }}>
+                {stats.following}
+              </Text>
               <Text style={{ color: "#aaa", fontSize: 12 }}>following</Text>
             </Pressable>
           </View>
@@ -96,33 +123,51 @@ export const UserProfileHeader: React.FC<{
       </View>
 
       <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
-        <StatsCard label="Questions" value={stats.questionsCreated} icon="question" />
-        <StatsCard label="Votes Cast" value={stats.totalVotesCast} icon="check-circle" />
-        <StatsCard label="Votes Received" value={stats.totalEngagement} icon="flame" />
+        <StatsCard
+          label='Questions'
+          value={stats.questionsCreated}
+          icon='question'
+        />
+        <StatsCard
+          label='Votes Cast'
+          value={stats.totalVotesCast}
+          icon='check-circle'
+        />
+        <StatsCard
+          label='Votes Received'
+          value={stats.totalEngagement}
+          icon='flame'
+        />
       </View>
 
-      <Pressable
-        onPress={onFollowPress}
-        style={({ pressed }) => ({
-          paddingHorizontal: 16,
-          paddingVertical: 8,
-          borderRadius: 8,
-          borderWidth: 1,
-          borderColor: isFollowing ? "#333" : "#fff",
-          backgroundColor: isFollowing ? "transparent" : pressed ? "#e0e0e0" : "#fff",
-          alignItems: "center",
-        })}
-      >
-        <Text
-          style={{
-            color: isFollowing ? "#aaa" : "#000",
-            fontSize: 14,
-            fontWeight: "600",
-          }}
+      {!isOwnProfile && (
+        <Pressable
+          onPress={onFollowPress}
+          style={({ pressed }) => ({
+            paddingHorizontal: 16,
+            paddingVertical: 8,
+            borderRadius: 8,
+            borderWidth: 1,
+            borderColor: isFollowing ? "#333" : "#fff",
+            backgroundColor: isFollowing
+              ? "transparent"
+              : pressed
+                ? "#e0e0e0"
+                : "#fff",
+            alignItems: "center",
+          })}
         >
-          {isFollowing ? "Following" : "Follow"}
-        </Text>
-      </Pressable>
+          <Text
+            style={{
+              color: isFollowing ? "#aaa" : "#000",
+              fontSize: 14,
+              fontWeight: "600",
+            }}
+          >
+            {isFollowing ? "Following" : "Follow"}
+          </Text>
+        </Pressable>
+      )}
     </View>
   );
 };

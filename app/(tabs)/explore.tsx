@@ -8,7 +8,10 @@ import {
 import { UserSearchCard } from "@/components/users";
 import { ActionButton, ChoiceOption } from "@/components/voting";
 import { useExploreTabReset } from "@/contexts/explore-tab-context";
-import { useRealtimeVoteCounts } from "@/lib/hooks/useRealtime";
+import {
+  useRealtimeQuestions,
+  useRealtimeVoteCounts,
+} from "@/lib/hooks/useRealtime";
 import { getProfile } from "@/lib/queries/profiles";
 import { Question as DbQuestion, getQuestions } from "@/lib/queries/questions";
 import {
@@ -139,79 +142,83 @@ export default function ExploreScreen() {
   displayIndexRef.current = displayIndex;
   voteHistoryRef.current = voteHistory;
 
-  const getSupabase = () => {
+  const getSupabase = React.useCallback(() => {
     if (!supabaseRef.current) {
       supabaseRef.current = createClerkSupabaseClient({
         getToken: getTokenRef.current,
       });
     }
     return supabaseRef.current;
-  };
+  }, []);
 
-  const fetchQuestions = React.useCallback(async (isRefresh = false) => {
-    if (isRefresh) {
-      setRefreshing(true);
-    }
-
-    try {
-      const supabase = getSupabase();
-      const currentUser = userRef.current;
-      const dbQuestions = await getQuestions(supabase, { limit: 100 });
-
-      if (dbQuestions.length === 0) {
-        setQuestions([]);
-        return;
+  const fetchQuestions = React.useCallback(
+    async (isRefresh = false) => {
+      if (isRefresh) {
+        setRefreshing(true);
+        pendingUndoIdsRef.current.clear();
       }
 
-      const questionIds = dbQuestions.map((q) => q.id);
-      const [voteCounts, userVotesMap] = await Promise.all([
-        getVoteCounts(supabase, questionIds),
-        currentUser
-          ? getUserVotes(supabase, currentUser.id, questionIds)
-          : Promise.resolve(new Map<string, "left" | "right">()),
-      ]);
+      try {
+        const supabase = getSupabase();
+        const currentUser = userRef.current;
+        const dbQuestions = await getQuestions(supabase, { limit: 100 });
 
-      const creatorIds = [...new Set(dbQuestions.map((q) => q.user_id))];
-      const profiles = await Promise.all(
-        creatorIds.map((id) => getProfile(supabase, id).catch(() => null)),
-      );
-      const profileMap = new Map<string, string | null>();
-      creatorIds.forEach((id, i) => {
-        const profile = profiles[i];
-        let displayName: string | null = null;
-        if (profile?.username) {
-          displayName = profile.username.toLowerCase();
-        } else if (profile?.first_name) {
-          displayName = profile.first_name.toLowerCase();
+        if (dbQuestions.length === 0) {
+          setQuestions([]);
+          return;
         }
-        profileMap.set(id, displayName);
-      });
 
-      initiallyVotedIdsRef.current = new Set(userVotesMap.keys());
-      pendingUndoIdsRef.current.clear();
+        const questionIds = dbQuestions.map((q) => q.id);
+        const [voteCounts, userVotesMap] = await Promise.all([
+          getVoteCounts(supabase, questionIds),
+          currentUser
+            ? getUserVotes(supabase, currentUser.id, questionIds)
+            : Promise.resolve(new Map<string, "left" | "right">()),
+        ]);
 
-      const mappedQuestions = dbQuestions.map((dbQ) => {
-        const votes = voteCounts.get(dbQ.id) ?? { left: 0, right: 0 };
-        const displayName = profileMap.get(dbQ.user_id) ?? null;
-        const userVote = userVotesMap.get(dbQ.id);
-        return mapDbQuestionToQuestion(
-          dbQ,
-          votes,
-          displayName,
-          dbQ.is_anonymous,
-          currentUser?.id ?? null,
-          userVote,
+        const creatorIds = [...new Set(dbQuestions.map((q) => q.user_id))];
+        const profiles = await Promise.all(
+          creatorIds.map((id) => getProfile(supabase, id).catch(() => null)),
         );
-      });
+        const profileMap = new Map<string, string | null>();
+        creatorIds.forEach((id, i) => {
+          const profile = profiles[i];
+          let displayName: string | null = null;
+          if (profile?.username) {
+            displayName = profile.username.toLowerCase();
+          } else if (profile?.first_name) {
+            displayName = profile.first_name.toLowerCase();
+          }
+          profileMap.set(id, displayName);
+        });
 
-      setQuestions(mappedQuestions);
-    } catch (err) {
-      console.error("Failed to fetch questions:", err);
-    } finally {
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
+        initiallyVotedIdsRef.current = new Set(userVotesMap.keys());
+        pendingUndoIdsRef.current.clear();
+
+        const mappedQuestions = dbQuestions.map((dbQ) => {
+          const votes = voteCounts.get(dbQ.id) ?? { left: 0, right: 0 };
+          const displayName = profileMap.get(dbQ.user_id) ?? null;
+          const userVote = userVotesMap.get(dbQ.id);
+          return mapDbQuestionToQuestion(
+            dbQ,
+            votes,
+            displayName,
+            dbQ.is_anonymous,
+            currentUser?.id ?? null,
+            userVote,
+          );
+        });
+
+        setQuestions(mappedQuestions);
+      } catch (err) {
+        console.error("Failed to fetch questions:", err);
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [getSupabase],
+  );
 
   React.useEffect(() => {
     if (!user || hasFetchedRef.current) return;
@@ -220,43 +227,47 @@ export default function ExploreScreen() {
   }, [user, fetchQuestions]);
 
   const supabase = React.useMemo(() => {
-    if (!userRef.current) return null;
+    if (!user) return null;
     return getSupabase();
-  }, []);
+  }, [user, getSupabase]);
 
-  const refreshVoteCounts = React.useCallback(async (questionId: string) => {
-    const currentUser = userRef.current;
-    if (!currentUser) return;
+  const refreshVoteCounts = React.useCallback(
+    async (questionId: string) => {
+      const currentUser = userRef.current;
+      if (!currentUser) return;
 
-    const supabase = getSupabase();
-    const [updatedVoteCounts, userVotesMap] = await Promise.all([
-      getVoteCounts(supabase, [questionId]),
-      getUserVotes(supabase, currentUser.id, [questionId]),
-    ]);
+      const supabase = getSupabase();
+      const [updatedVoteCounts, userVotesMap] = await Promise.all([
+        getVoteCounts(supabase, [questionId]),
+        getUserVotes(supabase, currentUser.id, [questionId]),
+      ]);
 
-    const newCounts = updatedVoteCounts.get(questionId) ?? {
-      left: 0,
-      right: 0,
-    };
-    const userVote = userVotesMap.get(questionId);
+      const newCounts = updatedVoteCounts.get(questionId) ?? {
+        left: 0,
+        right: 0,
+      };
+      const userVote = userVotesMap.get(questionId);
 
-    setQuestions((prev) => {
-      const updated = [...prev];
-      const idx = updated.findIndex((q) => q.id === questionId);
-      if (idx !== -1) {
-        const question = updated[idx];
-        // Don't update hasVoted for questions with pending undo
-        const isPendingUndo = pendingUndoIdsRef.current.has(questionId);
-        updated[idx] = {
-          ...question,
-          votes: newCounts,
-          hasVoted: isPendingUndo ? question.hasVoted : userVote !== undefined,
-          userVote: isPendingUndo ? question.userVote : userVote,
-        };
-      }
-      return updated;
-    });
-  }, []);
+      setQuestions((prev) => {
+        const updated = [...prev];
+        const idx = updated.findIndex((q) => q.id === questionId);
+        if (idx !== -1) {
+          const question = updated[idx];
+          const isPendingUndo = pendingUndoIdsRef.current.has(questionId);
+          updated[idx] = {
+            ...question,
+            votes: newCounts,
+            hasVoted: isPendingUndo
+              ? question.hasVoted
+              : userVote !== undefined,
+            userVote: isPendingUndo ? question.userVote : userVote,
+          };
+        }
+        return updated;
+      });
+    },
+    [getSupabase],
+  );
 
   const questionIds = React.useMemo(() => {
     return questions.map((q) => q.id);
@@ -264,26 +275,126 @@ export default function ExploreScreen() {
 
   useRealtimeVoteCounts(supabase, questionIds, refreshVoteCounts);
 
-  // Sync user vote statuses when tab comes into focus
+  const handleQuestionInsert = React.useCallback(
+    async (dbQuestion: any) => {
+      const currentUser = userRef.current;
+      if (!currentUser) return;
+      const isOwnQuestion = dbQuestion.user_id === currentUser.id;
+      const sb = getSupabase();
+      const voteCounts = await getVoteCounts(sb, [dbQuestion.id]);
+      let createdBy: string | undefined;
+      if (dbQuestion.is_anonymous) {
+        createdBy = "Anonymous";
+      } else {
+        const profile = await getProfile(sb, dbQuestion.user_id).catch(
+          () => null,
+        );
+        createdBy = profile?.username?.toLowerCase() || undefined;
+      }
+      const newQuestion: Question = {
+        id: dbQuestion.id,
+        visibleUserId: dbQuestion.is_anonymous ? undefined : dbQuestion.user_id,
+        title: dbQuestion.title,
+        prompt: dbQuestion.prompt,
+        promptImageUrl: dbQuestion.prompt_image_url || undefined,
+        left: {
+          id: "left",
+          label: dbQuestion.left_choice_label,
+          imageUrl: dbQuestion.left_choice_image_url || undefined,
+        },
+        right: {
+          id: "right",
+          label: dbQuestion.right_choice_label,
+          imageUrl: dbQuestion.right_choice_image_url || undefined,
+        },
+        votes: voteCounts.get(dbQuestion.id) || { left: 0, right: 0 },
+        meta: {
+          category: dbQuestion.category || undefined,
+          createdBy,
+        },
+        createdAt: dbQuestion.created_at,
+        hasVoted: false,
+        isOwnQuestion,
+      };
+      setQuestions((prev) => {
+        if (prev.some((q) => q.id === dbQuestion.id)) return prev;
+        return [newQuestion, ...prev];
+      });
+    },
+    [getSupabase],
+  );
+
+  const handleQuestionUpdate = React.useCallback((dbQuestion: any) => {
+    setQuestions((prev) =>
+      prev.map((q) =>
+        q.id === dbQuestion.id
+          ? {
+              ...q,
+              title: dbQuestion.title,
+              prompt: dbQuestion.prompt,
+              promptImageUrl: dbQuestion.prompt_image_url || undefined,
+              left: {
+                ...q.left,
+                label: dbQuestion.left_choice_label,
+                imageUrl: dbQuestion.left_choice_image_url || undefined,
+              },
+              right: {
+                ...q.right,
+                label: dbQuestion.right_choice_label,
+                imageUrl: dbQuestion.right_choice_image_url || undefined,
+              },
+              meta: {
+                ...q.meta,
+                category: dbQuestion.category || undefined,
+              },
+            }
+          : q,
+      ),
+    );
+  }, []);
+
+  const handleQuestionDelete = React.useCallback((questionId: string) => {
+    setQuestions((prev) => prev.filter((q) => q.id !== questionId));
+  }, []);
+
+  useRealtimeQuestions(
+    supabase,
+    handleQuestionInsert,
+    handleQuestionUpdate,
+    handleQuestionDelete,
+  );
+
   const syncUserVotes = React.useCallback(async () => {
     const currentUser = userRef.current;
     if (!currentUser || questions.length === 0) return;
 
+    pendingUndoIdsRef.current.clear();
+
     const supabase = getSupabase();
     const ids = questions.map((q) => q.id);
-    const userVotesMap = await getUserVotes(supabase, currentUser.id, ids);
+    const [userVotesMap, voteCounts] = await Promise.all([
+      getUserVotes(supabase, currentUser.id, ids),
+      getVoteCounts(supabase, ids),
+    ]);
 
     setQuestions((prev) =>
       prev.map((q) => {
-        // Don't update questions with pending undo
-        if (pendingUndoIdsRef.current.has(q.id)) return q;
         const userVote = userVotesMap.get(q.id);
         const hasVoted = userVote !== undefined;
-        if (q.hasVoted === hasVoted && q.userVote === userVote) return q;
-        return { ...q, hasVoted, userVote };
+        const currentVotes = q.votes ?? { left: 0, right: 0 };
+        const newVotes = voteCounts.get(q.id) ?? currentVotes;
+        if (
+          q.hasVoted === hasVoted &&
+          q.userVote === userVote &&
+          currentVotes.left === newVotes.left &&
+          currentVotes.right === newVotes.right
+        ) {
+          return q;
+        }
+        return { ...q, hasVoted, userVote, votes: newVotes };
       }),
     );
-  }, [questions]);
+  }, [questions, getSupabase]);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -957,7 +1068,8 @@ export default function ExploreScreen() {
                 {question.meta?.createdBy && (
                   <>
                     <Text style={{ color: "#aaa", fontSize: 12 }}> • </Text>
-                    {question.meta.createdBy !== "Anonymous" ? (
+                    {question.meta.createdBy !== "Anonymous" &&
+                    question.visibleUserId ? (
                       <Pressable
                         onPress={(e) => {
                           e.stopPropagation();
@@ -968,10 +1080,7 @@ export default function ExploreScreen() {
                             pathname: "/user-profile",
                             params: {
                               username: question.meta?.createdBy,
-                              userId:
-                                question.meta?.createdBy
-                                  ?.toLowerCase()
-                                  .replace(/\s+/g, "") || "1",
+                              userId: question.visibleUserId,
                             },
                           });
                         }}

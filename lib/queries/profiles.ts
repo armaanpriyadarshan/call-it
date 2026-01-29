@@ -84,3 +84,40 @@ export async function updateProfile(
 
   return data;
 }
+
+export async function getProfilesByUserIds(
+  supabase: SupabaseClient,
+  userIds: string[]
+): Promise<Profile[]> {
+  if (userIds.length === 0) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .in('user_id', userIds);
+
+  if (error) {
+    throw error;
+  }
+
+  return data || [];
+}
+
+export async function getProfileByUsername(
+  supabase: SupabaseClient,
+  username: string
+): Promise<Profile | null> {
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('*')
+    .eq('username', username)
+    .single();
+
+  if (error && error.code !== 'PGRST116') {
+    throw error;
+  }
+
+  return data;
+}

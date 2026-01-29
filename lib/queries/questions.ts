@@ -1,4 +1,4 @@
-import { SupabaseClient } from '@supabase/supabase-js';
+import { SupabaseClient } from "@supabase/supabase-js";
 
 export interface Question {
   id: string;
@@ -31,10 +31,10 @@ export interface CreateQuestionData {
 
 export async function createQuestion(
   supabase: SupabaseClient,
-  data: CreateQuestionData
+  data: CreateQuestionData,
 ): Promise<Question> {
   const { data: question, error } = await supabase
-    .from('questions')
+    .from("questions")
     .insert({
       user_id: data.user_id,
       title: data.title,
@@ -59,15 +59,15 @@ export async function createQuestion(
 
 export async function getQuestion(
   supabase: SupabaseClient,
-  questionId: string
+  questionId: string,
 ): Promise<Question | null> {
   const { data, error } = await supabase
-    .from('questions')
-    .select('*')
-    .eq('id', questionId)
+    .from("questions")
+    .select("*")
+    .eq("id", questionId)
     .single();
 
-  if (error && error.code !== 'PGRST116') {
+  if (error && error.code !== "PGRST116") {
     throw error;
   }
 
@@ -81,19 +81,19 @@ export async function getQuestions(
     offset?: number;
     category?: string;
     userId?: string;
-  }
+  },
 ): Promise<Question[]> {
   let query = supabase
-    .from('questions')
-    .select('*')
-    .order('created_at', { ascending: false });
+    .from("questions")
+    .select("*")
+    .order("created_at", { ascending: false });
 
   if (options?.category) {
-    query = query.eq('category', options.category);
+    query = query.eq("category", options.category);
   }
 
   if (options?.userId) {
-    query = query.eq('user_id', options.userId);
+    query = query.eq("user_id", options.userId);
   }
 
   if (options?.limit) {
@@ -101,7 +101,10 @@ export async function getQuestions(
   }
 
   if (options?.offset) {
-    query = query.range(options.offset, options.offset + (options.limit || 20) - 1);
+    query = query.range(
+      options.offset,
+      options.offset + (options.limit || 20) - 1,
+    );
   }
 
   const { data, error } = await query;
@@ -115,14 +118,44 @@ export async function getQuestions(
 
 export async function deleteQuestion(
   supabase: SupabaseClient,
-  questionId: string
+  questionId: string,
 ): Promise<void> {
   const { error } = await supabase
-    .from('questions')
+    .from("questions")
     .delete()
-    .eq('id', questionId);
+    .eq("id", questionId);
 
   if (error) {
     throw error;
   }
+}
+
+export interface UpdateQuestionData {
+  title?: string;
+  prompt?: string;
+  category?: string | null;
+  prompt_image_url?: string | null;
+  left_choice_label?: string;
+  left_choice_image_url?: string | null;
+  right_choice_label?: string;
+  right_choice_image_url?: string | null;
+}
+
+export async function updateQuestion(
+  supabase: SupabaseClient,
+  questionId: string,
+  data: UpdateQuestionData,
+): Promise<Question> {
+  const { data: question, error } = await supabase
+    .from("questions")
+    .update(data)
+    .eq("id", questionId)
+    .select()
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return question;
 }

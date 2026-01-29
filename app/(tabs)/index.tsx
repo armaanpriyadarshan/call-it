@@ -691,14 +691,18 @@ export default function HomeScreen() {
               {question.meta?.createdBy && (
                 <>
                   <Text style={{ color: "#aaa", fontSize: 12 }}> • </Text>
-                  {question.meta.createdBy !== "Anonymous" ? (
+                  {question.meta.createdBy !== "Anonymous" &&
+                  question.visibleUserId ? (
                     <Pressable
                       onPress={(e) => {
                         e.stopPropagation();
                         Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                         router.push({
                           pathname: "/user-profile",
-                          params: { username: question.meta?.createdBy },
+                          params: {
+                            username: question.meta?.createdBy,
+                            userId: question.visibleUserId,
+                          },
                         });
                       }}
                     >

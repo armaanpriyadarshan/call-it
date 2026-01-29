@@ -142,3 +142,120 @@ export async function getUserVotes(
 
   return votes;
 }
+
+export interface VoteWithQuestion {
+  id: string;
+  question_id: string;
+  user_id: string;
+  choice: 'left' | 'right';
+  created_at: string;
+  question: {
+    id: string;
+    title: string;
+    prompt: string;
+    category: string | null;
+    prompt_image_url: string | null;
+    left_choice_label: string;
+    left_choice_image_url: string | null;
+    right_choice_label: string;
+    right_choice_image_url: string | null;
+    is_anonymous: boolean;
+    user_id: string;
+  };
+}
+
+export async function getUserVotingHistory(
+  supabase: SupabaseClient,
+  userId: string,
+  options?: { limit?: number; offset?: number }
+): Promise<VoteWithQuestion[]> {
+  let query = supabase
+    .from('votes')
+    .select(`
+      id,
+      question_id,
+      user_id,
+      choice,
+      created_at,
+      question:questions (
+        id,
+        title,
+        prompt,
+        category,
+        prompt_image_url,
+        left_choice_label,
+        left_choice_image_url,
+        right_choice_label,
+        right_choice_image_url,
+        is_anonymous,
+        user_id
+      )
+    `)
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false });
+
+  if (options?.limit) {
+    query = query.limit(options.limit);
+  }
+
+  if (options?.offset) {
+    query = query.range(options.offset, options.offset + (options.limit || 20) - 1);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw error;
+  }
+
+  return (data || []) as unknown as VoteWithQuestion[];
+}
+
+export async function getUserVotesCastCount(
+  supabase: SupabaseClient,
+  userId: string
+): Promise<number> {
+  const { count, error } = await supabase
+    .from('votes')
+    .select('*', { count: 'exact', head: true })
+    .eq('user_id', userId);
+
+  if (error) {
+    throw error;
+  }
+
+  return count || 0;
+}
+
+export async function getTotalVotesOnUserQuestions(
+  supabase: SupabaseClient,
+  userId: string
+): Promise<number> {
+  // First get all question IDs for this user
+  const { data: questions, error: questionsError } = await supabase
+    .from('questions')
+    .select('id')
+    .eq('user_id', userId);
+
+  if (questionsError) {
+    throw questionsError;
+  }
+
+  if (!questions || questions.length === 0) {
+    return 0;
+  }
+
+  const questionIds = questions.map((q) => q.id);
+
+  // Then count all votes on those questions
+  const { count, error: votesError } = await supabase
+    .from('votes')
+    .select('*', { count: 'exact', head: true })
+    .in('question_id', questionIds);
+
+  if (votesError) {
+    throw votesError;
+  }
+
+  return count || 0;
+}
