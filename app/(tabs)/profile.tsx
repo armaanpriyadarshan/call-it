@@ -1,4 +1,7 @@
 import { useProfileTabReset } from "@/contexts/profile-tab-context";
+import { createClerkSupabaseClient } from "@/lib/supabase";
+import { Question as DbQuestion, getQuestions } from "@/lib/queries/questions";
+import { getVoteCounts } from "@/lib/queries/votes";
 import { useAuth, useUser } from "@clerk/clerk-expo";
 import Octicons from "@expo/vector-icons/Octicons";
 import * as Haptics from "expo-haptics";
@@ -831,12 +834,52 @@ const HORIZONTAL_ACTIVATION_DX = 8;
 const ANIMATION_DURATION = 200;
 const TAB_ANIMATION_DURATION = 250;
 
+function mapDbQuestionToQuestion(
+  dbQuestion: DbQuestion,
+  votes: { left: number; right: number },
+  createdBy: string | null,
+  currentUserId: string | null,
+): Question {
+  const isOwnQuestion =
+    currentUserId !== null && dbQuestion.user_id === currentUserId;
+
+  return {
+    id: dbQuestion.id,
+    visibleUserId: dbQuestion.user_id,
+    title: dbQuestion.title,
+    prompt: dbQuestion.prompt,
+    promptImageUrl: dbQuestion.prompt_image_url ?? undefined,
+    left: {
+      id: "left",
+      label: dbQuestion.left_choice_label,
+      imageUrl: dbQuestion.left_choice_image_url ?? undefined,
+    },
+    right: {
+      id: "right",
+      label: dbQuestion.right_choice_label,
+      imageUrl: dbQuestion.right_choice_image_url ?? undefined,
+    },
+    votes,
+    meta: {
+      category: dbQuestion.category ?? undefined,
+      createdBy: createdBy ?? undefined,
+    },
+    createdAt: dbQuestion.created_at,
+    hasVoted: false,
+    userVote: undefined,
+    isOwnQuestion,
+  };
+}
+
 export default function ProfileScreen() {
-  const { signOut } = useAuth();
+  const { signOut, getToken } = useAuth();
+  const { user } = useUser();
   const router = useRouter();
   const { registerResetCallback, unregisterResetCallback } = useProfileTabReset();
   const [activeTab, setActiveTab] = useState<"questions" | "history">("questions");
-  const [myQuestions, setMyQuestions] = useState(MOCK_MY_QUESTIONS);
+  const [myQuestions, setMyQuestions] = useState<Question[]>([]);
+  const [voteHistoryItems, setVoteHistoryItems] = useState<VoteHistoryItem[]>([]);
+  const [historyQuestions, setHistoryQuestions] = useState<Question[]>([]);
   const [editingQuestion, setEditingQuestion] = useState<Question | null>(null);
   const [editTitle, setEditTitle] = useState("");
   const [editPrompt, setEditPrompt] = useState("");
@@ -866,6 +909,115 @@ export default function ProfileScreen() {
   const profileViewOpacity = useRef(new Animated.Value(1)).current;
   const profileViewTranslateY = useRef(new Animated.Value(0)).current;
   const prevProfileViewRef = useRef<"profile" | "followers" | "following">("profile");
+  const supabaseRef = useRef<ReturnType<typeof createClerkSupabaseClient> | null>(null);
+
+  const getSupabase = () => {
+    if (!supabaseRef.current) {
+      supabaseRef.current = createClerkSupabaseClient({ getToken });
+    }
+    return supabaseRef.current;
+  };
+
+  // Load "My Questions" and real voting history from Supabase
+  useEffect(() => {
+    if (!user) return;
+
+    const fetchProfileData = async () => {
+      try {
+        const supabase = getSupabase();
+
+        // My Questions (questions created by the current user)
+        const dbQuestions = await getQuestions(supabase, {
+          userId: user.id,
+          limit: 100,
+        });
+        const myQuestionIds = dbQuestions.map((q) => q.id);
+        const myQuestionVoteCounts =
+          myQuestionIds.length > 0
+            ? await getVoteCounts(supabase, myQuestionIds)
+            : new Map<string, { left: number; right: number }>();
+
+        const displayName =
+          user.username ?? user.firstName ?? user.primaryEmailAddress?.emailAddress ?? "You";
+
+        const mappedMyQuestions = dbQuestions.map((dbQ) => {
+          const counts = myQuestionVoteCounts.get(dbQ.id) ?? { left: 0, right: 0 };
+          return mapDbQuestionToQuestion(dbQ, counts, displayName, user.id);
+        });
+        setMyQuestions(mappedMyQuestions);
+
+        // Voting history: questions the user has voted on
+        const { data: voteRows, error } = await supabase
+          .from("votes")
+          .select(
+            `
+            question_id,
+            choice,
+            created_at,
+            questions!inner (
+              id,
+              user_id,
+              title,
+              prompt,
+              category,
+              prompt_image_url,
+              left_choice_label,
+              left_choice_image_url,
+              right_choice_label,
+              right_choice_image_url,
+              is_anonymous,
+              created_at
+            )
+          `,
+          )
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: false })
+          .limit(50);
+
+        if (error) {
+          console.error("Failed to load vote history:", error);
+        }
+
+        const rows = (voteRows ?? []) as Array<{
+          question_id: string;
+          choice: "left" | "right";
+          created_at: string;
+          questions: DbQuestion;
+        }>;
+
+        const historyQuestionIds = rows.map((r) => r.question_id);
+        const historyVoteCounts =
+          historyQuestionIds.length > 0
+            ? await getVoteCounts(supabase, historyQuestionIds)
+            : new Map<string, { left: number; right: number }>();
+
+        const historyQuestionsMapped: Question[] = rows.map((row) => {
+          const dbQ = row.questions;
+          const counts = historyVoteCounts.get(row.question_id) ?? {
+            left: 0,
+            right: 0,
+          };
+          const createdBy =
+            dbQ.is_anonymous ? "Anonymous" : displayName;
+          return mapDbQuestionToQuestion(dbQ, counts, createdBy, user.id);
+        });
+
+        const historyItems: VoteHistoryItem[] = rows.map((row) => ({
+          questionId: row.question_id,
+          questionTitle: row.questions.title,
+          direction: row.choice,
+          votedAt: row.created_at,
+        }));
+
+        setHistoryQuestions(historyQuestionsMapped);
+        setVoteHistoryItems(historyItems);
+      } catch (err) {
+        console.error("Failed to load profile data:", err);
+      }
+    };
+
+    fetchProfileData();
+  }, [user, getToken]);
   
   useEffect(() => {
     Animated.timing(tabIndicatorPosition, {
@@ -1144,13 +1296,10 @@ export default function ProfileScreen() {
   }, [cardPosition]);
 
   const getQuestionsForTab = useCallback(() => {
-    return activeTab === "questions" 
-      ? myQuestions 
-      : MOCK_VOTE_HISTORY.map((item) => {
-          const q = myQuestions.find((q) => q.id === item.questionId);
-          return q || myQuestions[0];
-        });
-  }, [activeTab, myQuestions]);
+    return activeTab === "questions"
+      ? myQuestions
+      : historyQuestions;
+  }, [activeTab, myQuestions, historyQuestions]);
 
   const navigateCard = useCallback(
     (direction: "left" | "right") => {
@@ -1260,7 +1409,7 @@ export default function ProfileScreen() {
   };
 
   const handleVoteHistoryPress = (item: VoteHistoryItem) => {
-    const foundIndex = MOCK_VOTE_HISTORY.findIndex((v) => v.questionId === item.questionId);
+    const foundIndex = voteHistoryItems.findIndex((v) => v.questionId === item.questionId);
     if (foundIndex >= 0) {
       setActiveTab("history");
       setCardDisplayIndex(foundIndex);
@@ -1290,9 +1439,10 @@ export default function ProfileScreen() {
     const leftPercentage = percentages.left;
     const rightPercentage = percentages.right;
 
-    const userVote = activeTab === "history" && cardDisplayIndex < MOCK_VOTE_HISTORY.length
-      ? MOCK_VOTE_HISTORY[cardDisplayIndex]?.direction
-      : null;
+    const userVote =
+      activeTab === "history" && cardDisplayIndex < voteHistoryItems.length
+        ? voteHistoryItems[cardDisplayIndex]?.direction
+        : null;
 
     return (
       <View style={{ flex: 1, backgroundColor: "black" }}>
@@ -2276,14 +2426,14 @@ export default function ProfileScreen() {
               </View>
             ) : (
               <View style={{ paddingHorizontal: 24 }}>
-                {MOCK_VOTE_HISTORY.length > 0 ? (
-                  MOCK_VOTE_HISTORY.map((item) => {
-                    const question = myQuestions.find((q) => q.id === item.questionId);
+                {voteHistoryItems.length > 0 ? (
+                  voteHistoryItems.map((item, index) => {
+                    const question = historyQuestions[index] ?? null;
                     return (
                       <VoteHistoryItemCard
-                        key={item.questionId}
+                        key={`${item.questionId}-${item.votedAt ?? index}`}
                         item={item}
-                        question={question || null}
+                        question={question}
                         onPress={() => handleVoteHistoryPress(item)}
                       />
                     );
