@@ -1,7 +1,9 @@
+import { useAuth, useUser } from "@clerk/clerk-expo";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import React from "react";
 import {
+  ActivityIndicator,
   Animated,
   Dimensions,
   Image,
@@ -14,82 +16,85 @@ import {
 import type { Question, VoteHistoryItem } from "@/types";
 import { ActionButton, ChoiceOption } from "@/components/voting";
 import { getNormalizedPercentages } from "@/utils/voting";
-
-const SAMPLE_QUESTIONS: Question[] = [
-  {
-    id: "q1",
-    title: "Outfit check",
-    prompt: "Which one for dinner tonight?",
-    promptImageUrl: "https://images.unsplash.com/photo-1520975916090-3105956dac38?auto=format&fit=crop&w=1200&q=80",
-    left: {
-      id: "left",
-      label: "Black dress",
-      imageUrl: "https://images.unsplash.com/photo-1643756635111-ee5b18e055dc?w=400&h=400&fit=crop",
-    },
-    right: {
-      id: "right",
-      label: "Red dress",
-      imageUrl: "https://images.unsplash.com/photo-1595777457583-95e059d581b8?w=400&h=400&fit=crop",
-    },
-    votes: { left: 12, right: 8 },
-    meta: { category: "Style", createdBy: "fashionista" },
-  },
-  {
-    id: "q2",
-    title: "Text them?",
-    prompt: "Do I double-text if they haven't replied in 24 hours?",
-    left: { id: "left", label: "No (chill)" },
-    right: { id: "right", label: "Yes (send it)" },
-    votes: { left: 45, right: 23 },
-    meta: { category: "Social", createdBy: "Anonymous" },
-  },
-  {
-    id: "q3",
-    title: "Long prompt stress test",
-    prompt: "I'm picking between two internships. Option A is a bigger brand, but the team is less aligned with what I want to do long-term. Option B is smaller, but I'll get more ownership and mentorship. I'm worried Option B won't look as strong on my resume, but I also don't want to be stuck doing boring work all summer. For context: I care about learning, actual shipping, and a team that invests in me. Which should I choose?",
-    left: { id: "left", label: "Option A (brand)" },
-    right: { id: "right", label: "Option B (growth)" },
-    votes: { left: 7, right: 15 },
-    meta: { category: "Career", createdBy: "careercoach" },
-  },
-  {
-    id: "q4",
-    title: "Food",
-    prompt: "Pick my late-night order.",
-    left: {
-      id: "left",
-      label: "Sushi",
-      imageUrl: "https://images.unsplash.com/photo-1553621042-f6e147245754?auto=format&fit=crop&w=1200&q=80",
-    },
-    right: {
-      id: "right",
-      label: "Tacos",
-      imageUrl: "https://images.unsplash.com/photo-1552332386-f8dd00dc2f85?auto=format&fit=crop&w=1200&q=80",
-    },
-    votes: { left: 3, right: 5 },
-    meta: { category: "Food", createdBy: "foodie" },
-  },
-];
+import { createClerkSupabaseClient } from "@/lib/supabase";
+import { getQuestions, Question as DbQuestion } from "@/lib/queries/questions";
+import { getVoteCounts, getUserVotedQuestionIds, createVote, deleteVote } from "@/lib/queries/votes";
+import { getProfile } from "@/lib/queries/profiles";
 
 const SCREEN_W = Dimensions.get("window").width;
 const SWIPE_THRESHOLD = 0.25 * SCREEN_W;
 const SWIPE_OUT_DISTANCE = 1.2 * SCREEN_W;
 const HORIZONTAL_ACTIVATION_DX = 8;
 
+function mapDbQuestionToQuestion(
+  dbQuestion: DbQuestion,
+  votes: { left: number; right: number },
+  creatorUsername: string | null,
+  isAnonymous: boolean
+): Question {
+  return {
+    id: dbQuestion.id,
+    title: dbQuestion.title,
+    prompt: dbQuestion.prompt,
+    promptImageUrl: dbQuestion.prompt_image_url ?? undefined,
+    left: {
+      id: "left",
+      label: dbQuestion.left_choice_label,
+      imageUrl: dbQuestion.left_choice_image_url ?? undefined,
+    },
+    right: {
+      id: "right",
+      label: dbQuestion.right_choice_label,
+      imageUrl: dbQuestion.right_choice_image_url ?? undefined,
+    },
+    votes,
+    meta: {
+      category: dbQuestion.category ?? undefined,
+      createdBy: isAnonymous ? "Anonymous" : (creatorUsername ?? "Unknown"),
+    },
+    createdAt: dbQuestion.created_at,
+  };
+}
 
 export default function HomeScreen() {
   const router = useRouter();
-  const [questions, setQuestions] = React.useState(SAMPLE_QUESTIONS);
-  const [index, setIndex] = React.useState(0);
+  const { getToken } = useAuth();
+  const { user } = useUser();
+
+  const [questions, setQuestions] = React.useState<Question[]>([]);
+  const [loading, setLoading] = React.useState(true);
   const [displayIndex, setDisplayIndex] = React.useState(0);
-  const question = questions[displayIndex] ?? null;
   const [swipeProgress, setSwipeProgress] = React.useState(0);
   const [swipeDirection, setSwipeDirection] = React.useState<"left" | "right" | null>(null);
   const [voteHistory, setVoteHistory] = React.useState<VoteHistoryItem[]>([]);
   const [cardOpacity, setCardOpacity] = React.useState(1);
 
+  const question = questions[displayIndex] ?? null;
+
+  // Refs for stable callback access
   const position = React.useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const entryScale = React.useRef(new Animated.Value(1)).current;
+  const hasFetchedRef = React.useRef(false);
+  const supabaseRef = React.useRef<ReturnType<typeof createClerkSupabaseClient> | null>(null);
+  const questionsRef = React.useRef(questions);
+  const displayIndexRef = React.useRef(displayIndex);
+  const voteHistoryRef = React.useRef(voteHistory);
+  const userRef = React.useRef(user);
+  const getTokenRef = React.useRef(getToken);
+
+  // Keep refs in sync
+  questionsRef.current = questions;
+  displayIndexRef.current = displayIndex;
+  voteHistoryRef.current = voteHistory;
+  userRef.current = user;
+  getTokenRef.current = getToken;
+
+  const getSupabase = () => {
+    if (!supabaseRef.current) {
+      supabaseRef.current = createClerkSupabaseClient({ getToken: getTokenRef.current });
+    }
+    return supabaseRef.current;
+  };
 
   const rotate = position.x.interpolate({
     inputRange: [-SCREEN_W, 0, SCREEN_W],
@@ -100,7 +105,120 @@ export default function HomeScreen() {
     transform: [{ translateX: position.x }, { rotate }],
   };
 
-  const resetCard = React.useCallback(() => {
+  // Fetch questions on mount
+  React.useEffect(() => {
+    if (!user || hasFetchedRef.current) return;
+    hasFetchedRef.current = true;
+
+    const fetchQuestions = async () => {
+      try {
+        const supabase = getSupabase();
+        const dbQuestions = await getQuestions(supabase, { limit: 50 });
+
+        if (dbQuestions.length === 0) {
+          setQuestions([]);
+          setLoading(false);
+          return;
+        }
+
+        const questionIds = dbQuestions.map((q) => q.id);
+        const [voteCounts, votedIds] = await Promise.all([
+          getVoteCounts(supabase, questionIds),
+          getUserVotedQuestionIds(supabase, user.id),
+        ]);
+
+        const unvotedQuestions = dbQuestions.filter((q) => !votedIds.has(q.id));
+        const creatorIds = [...new Set(unvotedQuestions.map((q) => q.user_id))];
+        const profiles = await Promise.all(
+          creatorIds.map((id) => getProfile(supabase, id).catch(() => null))
+        );
+        const profileMap = new Map<string, string | null>();
+        creatorIds.forEach((id, i) => {
+          const profile = profiles[i];
+          let displayName: string | null = null;
+          if (profile?.username) {
+            displayName = profile.username.toLowerCase();
+          } else if (profile?.first_name) {
+            displayName = profile.first_name.toLowerCase();
+          }
+          profileMap.set(id, displayName);
+        });
+
+        const mappedQuestions = unvotedQuestions.map((dbQ) => {
+          const votes = voteCounts.get(dbQ.id) ?? { left: 0, right: 0 };
+          const displayName = profileMap.get(dbQ.user_id) ?? null;
+          return mapDbQuestionToQuestion(dbQ, votes, displayName, dbQ.is_anonymous);
+        });
+
+        setQuestions(mappedQuestions);
+      } catch (err) {
+        console.error("Failed to fetch questions:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchQuestions();
+  }, [user]);
+
+  // Action handlers stored in ref so panResponder can access latest versions
+  const actionsRef = React.useRef({
+    recordVote: (_direction: "left" | "right") => {},
+    advance: (_direction: "left" | "right" | null) => {},
+    resetCard: () => {},
+    forceSwipe: (_direction: "left" | "right") => {},
+    skip: () => {},
+    undo: () => {},
+  });
+
+  actionsRef.current.recordVote = (direction: "left" | "right") => {
+    const currentUser = userRef.current;
+    const currentQuestions = questionsRef.current;
+    const currentIndex = displayIndexRef.current;
+    const currentQuestion = currentQuestions[currentIndex];
+
+    if (!currentUser || !currentQuestion) return;
+
+    setQuestions((prev) => {
+      const updated = [...prev];
+      const q = updated[currentIndex];
+      if (q) {
+        const votes = q.votes ?? { left: 0, right: 0 };
+        updated[currentIndex] = {
+          ...q,
+          votes: { ...votes, [direction]: votes[direction] + 1 },
+        };
+      }
+      return updated;
+    });
+
+    setVoteHistory((prev) => [
+      ...prev,
+      { questionId: currentQuestion.id, questionIndex: currentIndex, direction },
+    ]);
+
+    const supabase = getSupabase();
+    createVote(supabase, currentQuestion.id, currentUser.id, direction).catch((err) => {
+      console.error("Failed to record vote:", err);
+    });
+  };
+
+  actionsRef.current.advance = (direction: "left" | "right" | null) => {
+    if (direction) {
+      actionsRef.current.recordVote(direction);
+    }
+
+    const currentQuestions = questionsRef.current;
+    const currentIndex = displayIndexRef.current;
+    const nextIdx = (currentIndex + 1) >= currentQuestions.length ? 0 : currentIndex + 1;
+
+    setSwipeProgress(0);
+    setSwipeDirection(null);
+    setCardOpacity(0);
+    setDisplayIndex(nextIdx);
+  };
+
+  actionsRef.current.resetCard = () => {
     Animated.spring(position, {
       toValue: { x: 0, y: 0 },
       useNativeDriver: false,
@@ -109,71 +227,48 @@ export default function HomeScreen() {
       setSwipeProgress(0);
       setSwipeDirection(null);
     });
-  }, [position]);
+  };
 
-  const recordVote = React.useCallback(
-    (direction: "left" | "right") => {
-      setQuestions((prev) => {
-        const updated = [...prev];
-        const currentQ = updated[index];
-        if (currentQ) {
-          const currentVotes = currentQ.votes ?? { left: 0, right: 0 };
-          updated[index] = {
-            ...currentQ,
-            votes: {
-              ...currentVotes,
-              [direction]: currentVotes[direction] + 1,
-            },
-          };
-        }
-        return updated;
-      });
-      setVoteHistory((prev) => [...prev, { questionIndex: index, direction }]);
-    },
-    [index]
-  );
+  actionsRef.current.forceSwipe = (direction: "left" | "right") => {
+    const x = direction === "right" ? SWIPE_OUT_DISTANCE : -SWIPE_OUT_DISTANCE;
 
-  const advance = React.useCallback(
-    (direction: "left" | "right" | null = null) => {
-      if (direction) {
-        recordVote(direction);
-      }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setSwipeProgress(0);
+    setSwipeDirection(null);
 
-      const nextIdx = (displayIndex + 1) >= questions.length ? 0 : displayIndex + 1;
-      
-      setSwipeProgress(0);
-      setSwipeDirection(null);
-      setCardOpacity(0); // Hide old card immediately
-      
-      // Update displayIndex immediately - the old card is already hidden by opacity
-      // The useEffect will handle resetting position and animating in the new card
-      setDisplayIndex(nextIdx);
-      setIndex(nextIdx);
-    },
-    [questions.length, recordVote, displayIndex]
-  );
+    Animated.timing(position, {
+      toValue: { x, y: 0 },
+      duration: 200,
+      useNativeDriver: false,
+    }).start(() => {
+      actionsRef.current.advance(direction);
+    });
+  };
 
-  const skip = React.useCallback(() => {
+  actionsRef.current.skip = () => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    advance(null);
-  }, [advance]);
+    actionsRef.current.advance(null);
+  };
 
-  const undo = React.useCallback(() => {
-    if (voteHistory.length === 0) return;
+  actionsRef.current.undo = () => {
+    const currentUser = userRef.current;
+    const history = voteHistoryRef.current;
 
-    const lastVote = voteHistory[voteHistory.length - 1];
-    const previousIndex = lastVote.questionIndex;
+    if (history.length === 0 || !currentUser) return;
+
+    const lastVote = history[history.length - 1];
+    const previousIndex = lastVote.questionIndex!;
 
     setQuestions((prev) => {
       const updated = [...prev];
-      const votedQ = updated[previousIndex];
-      if (votedQ) {
-        const currentVotes = votedQ.votes ?? { left: 0, right: 0 };
+      const q = updated[previousIndex];
+      if (q) {
+        const votes = q.votes ?? { left: 0, right: 0 };
         updated[previousIndex] = {
-          ...votedQ,
+          ...q,
           votes: {
-            ...currentVotes,
-            [lastVote.direction]: Math.max(0, currentVotes[lastVote.direction] - 1),
+            ...votes,
+            [lastVote.direction]: Math.max(0, votes[lastVote.direction] - 1),
           },
         };
       }
@@ -182,85 +277,68 @@ export default function HomeScreen() {
 
     setVoteHistory((prev) => prev.slice(0, -1));
     setDisplayIndex(previousIndex);
-    setIndex(previousIndex);
     position.setValue({ x: 0, y: 0 });
     setSwipeProgress(0);
     setSwipeDirection(null);
     setCardOpacity(1);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  }, [voteHistory, position]);
 
-  const forceSwipe = React.useCallback(
-    (direction: "left" | "right") => {
-    const x = direction === "right" ? SWIPE_OUT_DISTANCE : -SWIPE_OUT_DISTANCE;
-
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      setSwipeProgress(0);
-      setSwipeDirection(null);
-
-    Animated.timing(position, {
-      toValue: { x, y: 0 },
-        duration: 200,
-      useNativeDriver: false,
-      }).start(() => {
-        advance(direction);
+    if (lastVote.questionId) {
+      const supabase = getSupabase();
+      deleteVote(supabase, lastVote.questionId, currentUser.id).catch((err) => {
+        console.error("Failed to delete vote:", err);
       });
-    },
-    [position, advance]
-  );
+    }
+  };
 
+  // Stable pan responder - created once, uses actionsRef for latest handlers
   const panResponder = React.useMemo(
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: () => false,
-
         onMoveShouldSetPanResponder: (_, gesture) => {
           const dx = Math.abs(gesture.dx);
           const dy = Math.abs(gesture.dy);
           if (dy > dx) return false;
           return dx > HORIZONTAL_ACTIVATION_DX;
         },
-
         onPanResponderMove: (_, gesture) => {
           position.setValue({ x: gesture.dx, y: 0 });
         },
-
         onPanResponderRelease: (_, gesture) => {
           if (gesture.dx > SWIPE_THRESHOLD) {
-            forceSwipe("right");
+            actionsRef.current.forceSwipe("right");
           } else if (gesture.dx < -SWIPE_THRESHOLD) {
-            forceSwipe("left");
+            actionsRef.current.forceSwipe("left");
           } else {
-            resetCard();
+            actionsRef.current.resetCard();
           }
         },
-
         onPanResponderTerminate: () => {
-          resetCard();
+          actionsRef.current.resetCard();
         },
       }),
-    [resetCard, forceSwipe, position]
+    [position]
   );
 
+  // Card entry animation
   React.useEffect(() => {
-    // This effect runs when displayIndex changes, animating in the new card
-    // Reset position first to ensure the new card starts at center
     position.setValue({ x: 0, y: 0 });
     entryScale.setValue(0.98);
     setCardOpacity(0);
-    
-    // Animate in the new card
+
     requestAnimationFrame(() => {
       setCardOpacity(1);
       Animated.spring(entryScale, {
-      toValue: 1,
+        toValue: 1,
         tension: 50,
         friction: 7,
-      useNativeDriver: false,
-    }).start();
+        useNativeDriver: false,
+      }).start();
     });
   }, [displayIndex, entryScale, position]);
 
+  // Track swipe progress
   React.useEffect(() => {
     const listenerId = position.x.addListener(({ value }) => {
       const absDx = Math.abs(value);
@@ -282,52 +360,43 @@ export default function HomeScreen() {
       }
     });
 
-    return () => {
-      position.x.removeListener(listenerId);
-    };
-  }, [displayIndex, position.x]);
+    return () => position.x.removeListener(listenerId);
+  }, [position.x]);
 
-  if (!question) {
+  if (loading) {
     return (
-      <View style={{ flex: 1, backgroundColor: "black", padding: 24, justifyContent: "center" }}>
-        <Text style={{ color: "white" }}>No questions</Text>
+      <View style={{ flex: 1, backgroundColor: "black", justifyContent: "center", alignItems: "center" }}>
+        <ActivityIndicator size="large" color="white" />
+      </View>
+    );
+  }
+
+  if (!question || questions.length === 0) {
+    return (
+      <View style={{ flex: 1, backgroundColor: "black", padding: 24, justifyContent: "center", alignItems: "center" }}>
+        <Text style={{ color: "white", fontSize: 18, textAlign: "center" }}>No questions to vote on</Text>
+        <Text style={{ color: "#aaa", fontSize: 14, marginTop: 8, textAlign: "center" }}>
+          Check back later or create your own!
+        </Text>
       </View>
     );
   }
 
   const currentVotes = question.votes ?? { left: 0, right: 0 };
   const currentTotal = currentVotes.left + currentVotes.right;
-  
+
   const previewVotes = {
     left: swipeDirection === "left" ? currentVotes.left + 1 : currentVotes.left,
     right: swipeDirection === "right" ? currentVotes.right + 1 : currentVotes.right,
   };
-  
   const totalPreviewVotes = previewVotes.left + previewVotes.right;
-  
-  
-  let leftPercentage: number;
-  let rightPercentage: number;
-  
-  if (swipeProgress > 0 && swipeDirection === "left") {
-    const percentages = getNormalizedPercentages(previewVotes.left, previewVotes.right, totalPreviewVotes);
-    leftPercentage = percentages.left;
-    rightPercentage = percentages.right;
-  } else if (swipeProgress > 0 && swipeDirection === "right") {
-    const percentages = getNormalizedPercentages(previewVotes.left, previewVotes.right, totalPreviewVotes);
-    leftPercentage = percentages.left;
-    rightPercentage = percentages.right;
-  } else {
-    const percentages = getNormalizedPercentages(currentVotes.left, currentVotes.right, currentTotal);
-    leftPercentage = percentages.left;
-    rightPercentage = percentages.right;
-  }
-  
+
+  const percentages = swipeProgress > 0 && swipeDirection
+    ? getNormalizedPercentages(previewVotes.left, previewVotes.right, totalPreviewVotes)
+    : getNormalizedPercentages(currentVotes.left, currentVotes.right, currentTotal);
+
   const leftVotes = swipeProgress > 0 && swipeDirection === "left" ? previewVotes.left : currentVotes.left;
   const rightVotes = swipeProgress > 0 && swipeDirection === "right" ? previewVotes.right : currentVotes.right;
-  
-  const leftHighlight = swipeDirection === "left" ? swipeProgress : 0;
-  const rightHighlight = swipeDirection === "right" ? swipeProgress : 0;
 
   return (
     <View style={{ flex: 1, backgroundColor: "black", padding: 24 }}>
@@ -344,110 +413,106 @@ export default function HomeScreen() {
         }}
       >
         {voteHistory.length > 0 ? (
-          <ActionButton onPress={undo} icon="undo" label="Undo" />
+          <ActionButton onPress={() => actionsRef.current.undo()} icon="undo" label="Undo" />
         ) : (
           <View style={{ minWidth: 60 }} />
         )}
-
-        <ActionButton onPress={skip} icon="arrow-right" label="Skip" />
+        <ActionButton onPress={() => actionsRef.current.skip()} icon="arrow-right" label="Skip" />
       </View>
 
       <View style={{ flex: 1, justifyContent: "center" }}>
-          <Animated.View
+        <Animated.View
           key={`${question.id}-${displayIndex}`}
-            {...panResponder.panHandlers}
-            style={[
-              {
-                borderRadius: 24,
-                borderWidth: 1,
-                borderColor: "#333",
-                backgroundColor: "#0f0f0f",
-                overflow: "hidden",
+          {...panResponder.panHandlers}
+          style={[
+            {
+              borderRadius: 24,
+              borderWidth: 1,
+              borderColor: "#333",
+              backgroundColor: "#0f0f0f",
+              overflow: "hidden",
               opacity: cardOpacity,
-              },
-              cardStyle,
-              { transform: [...cardStyle.transform, { scale: entryScale }] },
-            ]}
-          >
-            <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: "#222" }}>
-              <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
-                <Text style={{ color: "#aaa", fontSize: 12 }}>
-                  {question.meta?.category ?? "General"}
-                </Text>
-                {question.meta?.createdBy && (
-                  <>
-                    <Text style={{ color: "#aaa", fontSize: 12 }}> • </Text>
-                    {question.meta.createdBy !== "Anonymous" ? (
-                      <Pressable
-                        onPress={(e) => {
-                          e.stopPropagation();
-                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                          router.push({
-                            pathname: "/user-profile",
-                            params: { username: question.meta.createdBy, userId: question.meta.createdBy?.toLowerCase().replace(/\s+/g, "") || "1" },
-                          });
-                        }}
-                      >
-                        {({ pressed }) => (
-                          <Text style={{ color: "#aaa", fontSize: 12, textDecorationLine: pressed ? "underline" : "none" }}>
-                            {question.meta.createdBy}
-                          </Text>
-                        )}
-                      </Pressable>
-                    ) : (
-                      <Text style={{ color: "#aaa", fontSize: 12 }}>{question.meta.createdBy}</Text>
-                    )}
-                  </>
-                )}
-              </View>
-              <Text style={{ color: "white", fontSize: 20, fontWeight: "800", marginTop: 6 }}>
-                {question.title}
+            },
+            cardStyle,
+            { transform: [...cardStyle.transform, { scale: entryScale }] },
+          ]}
+        >
+          <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: "#222" }}>
+            <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
+              <Text style={{ color: "#aaa", fontSize: 12 }}>
+                {question.meta?.category ?? "General"}
               </Text>
-            </View>
-
-            <ScrollView
-              style={{ maxHeight: 260 }}
-              contentContainerStyle={{ padding: 16, gap: 12 }}
-              nestedScrollEnabled
-            >
-            <Text style={{ color: "white", fontSize: 16, lineHeight: 22 }}>{question.prompt}</Text>
-
-              {question.promptImageUrl && (
-                <Image
-                  source={{ uri: question.promptImageUrl }}
-                  style={{ width: "100%", height: 180, borderRadius: 16 }}
-                />
+              {question.meta?.createdBy && (
+                <>
+                  <Text style={{ color: "#aaa", fontSize: 12 }}> • </Text>
+                  {question.meta.createdBy !== "Anonymous" ? (
+                    <Pressable
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        router.push({
+                          pathname: "/user-profile",
+                          params: { username: question.meta?.createdBy },
+                        });
+                      }}
+                    >
+                      {({ pressed }) => (
+                        <Text style={{ color: "#aaa", fontSize: 12, textDecorationLine: pressed ? "underline" : "none" }}>
+                          {question.meta?.createdBy}
+                        </Text>
+                      )}
+                    </Pressable>
+                  ) : (
+                    <Text style={{ color: "#aaa", fontSize: 12 }}>{question.meta.createdBy}</Text>
+                  )}
+                </>
               )}
-            </ScrollView>
+            </View>
+            <Text style={{ color: "white", fontSize: 20, fontWeight: "800", marginTop: 6 }}>
+              {question.title}
+            </Text>
+          </View>
 
-            <View style={{ padding: 16, gap: 12, borderTopWidth: 1, borderTopColor: "#222" }}>
+          <ScrollView
+            style={{ maxHeight: 260 }}
+            contentContainerStyle={{ padding: 16, gap: 12 }}
+            nestedScrollEnabled
+          >
+            <Text style={{ color: "white", fontSize: 16, lineHeight: 22 }}>{question.prompt}</Text>
+            {question.promptImageUrl && (
+              <Image
+                source={{ uri: question.promptImageUrl }}
+                style={{ width: "100%", height: 180, borderRadius: 16 }}
+              />
+            )}
+          </ScrollView>
+
+          <View style={{ padding: 16, gap: 12, borderTopWidth: 1, borderTopColor: "#222" }}>
             <ChoiceOption
               choice={question.left}
               direction="left"
-              percentage={leftPercentage}
+              percentage={percentages.left}
               votes={leftVotes}
               swipeProgress={swipeProgress}
               swipeDirection={swipeDirection}
               isSelected={swipeDirection === "left"}
-              highlight={leftHighlight}
+              highlight={swipeDirection === "left" ? swipeProgress : 0}
             />
-
             <ChoiceOption
               choice={question.right}
               direction="right"
-              percentage={rightPercentage}
+              percentage={percentages.right}
               votes={rightVotes}
               swipeProgress={swipeProgress}
               swipeDirection={swipeDirection}
               isSelected={swipeDirection === "right"}
-              highlight={rightHighlight}
+              highlight={swipeDirection === "right" ? swipeProgress : 0}
             />
-
-              <Text style={{ color: "#777", fontSize: 12 }}>
-                Tip: Scroll vertically in the prompt. Swipe left or right to pick.
-              </Text>
-            </View>
-          </Animated.View>
+            <Text style={{ color: "#777", fontSize: 12 }}>
+              Tip: Scroll vertically in the prompt. Swipe left or right to pick.
+            </Text>
+          </View>
+        </Animated.View>
       </View>
     </View>
   );

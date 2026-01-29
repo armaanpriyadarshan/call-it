@@ -8,11 +8,12 @@ if (!supabaseUrl || !supabasePublishableKey) {
   throw new Error('Missing Supabase environment variables. Add EXPO_PUBLIC_SUPABASE_URL and EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY to .env');
 }
 
-export const supabase = createClient(supabaseUrl, supabasePublishableKey, {
-  auth: {
-    storage: localStorage,
-    autoRefreshToken: true,
-    persistSession: true,
-    detectSessionInUrl: false,
-  },
-});
+export function createClerkSupabaseClient(session: { getToken: () => Promise<string | null> } | null) {
+  return createClient(
+    supabaseUrl!,
+    supabasePublishableKey!,
+    {
+      accessToken: async () => session ? await session.getToken() : null,
+    }
+  );
+}
