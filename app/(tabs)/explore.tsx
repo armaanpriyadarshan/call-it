@@ -1,18 +1,29 @@
 import { QuestionCard } from "@/components/questions";
-import { AutocompleteItem, RecentSearchItem, SearchBar, SearchFilterTab } from "@/components/search";
+import {
+  AutocompleteItem,
+  RecentSearchItem,
+  SearchBar,
+  SearchFilterTab,
+} from "@/components/search";
 import { UserSearchCard } from "@/components/users";
 import { ActionButton, ChoiceOption } from "@/components/voting";
 import { useExploreTabReset } from "@/contexts/explore-tab-context";
-import { createClerkSupabaseClient } from "@/lib/supabase";
-import { getQuestions, Question as DbQuestion } from "@/lib/queries/questions";
-import { getVoteCounts } from "@/lib/queries/votes";
+import { useRealtimeVoteCounts } from "@/lib/hooks/useRealtime";
 import { getProfile } from "@/lib/queries/profiles";
+import { Question as DbQuestion, getQuestions } from "@/lib/queries/questions";
+import {
+  createVote,
+  deleteVote,
+  getUserVotes,
+  getVoteCounts,
+} from "@/lib/queries/votes";
+import { createClerkSupabaseClient } from "@/lib/supabase";
 import type { Question, User, VoteHistoryItem } from "@/types";
 import { calculateVoteData } from "@/utils/voting";
 import { useAuth, useUser } from "@clerk/clerk-expo";
 import Octicons from "@expo/vector-icons/Octicons";
 import * as Haptics from "expo-haptics";
-import { useRouter } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import React from "react";
 import {
   ActivityIndicator,
@@ -35,10 +46,15 @@ function mapDbQuestionToQuestion(
   dbQuestion: DbQuestion,
   votes: { left: number; right: number },
   creatorUsername: string | null,
-  isAnonymous: boolean
+  isAnonymous: boolean,
+  currentUserId: string | null,
+  userVote: "left" | "right" | undefined,
 ): Question {
+  const isOwnQuestion =
+    currentUserId !== null && dbQuestion.user_id === currentUserId;
   return {
     id: dbQuestion.id,
+    visibleUserId: dbQuestion.user_id,
     title: dbQuestion.title,
     prompt: dbQuestion.prompt,
     promptImageUrl: dbQuestion.prompt_image_url ?? undefined,
@@ -58,6 +74,9 @@ function mapDbQuestionToQuestion(
       createdBy: isAnonymous ? "Anonymous" : (creatorUsername ?? "Unknown"),
     },
     createdAt: dbQuestion.created_at,
+    hasVoted: userVote !== undefined,
+    userVote,
+    isOwnQuestion,
   };
 }
 
@@ -68,12 +87,10 @@ const HORIZONTAL_ACTIVATION_DX = 8;
 const LEFT_EDGE_THRESHOLD = 50;
 const MAX_RECENT_SEARCHES = 10;
 
-
-
-
 export default function ExploreScreen() {
   const router = useRouter();
-  const { registerResetCallback, unregisterResetCallback } = useExploreTabReset();
+  const { registerResetCallback, unregisterResetCallback } =
+    useExploreTabReset();
   const { getToken } = useAuth();
   const { user } = useUser();
 
@@ -85,11 +102,12 @@ export default function ExploreScreen() {
   const [loading, setLoading] = React.useState(true);
   const [refreshing, setRefreshing] = React.useState(false);
   const [viewMode, setViewMode] = React.useState<"list" | "card">("list");
-  const [index, setIndex] = React.useState(0);
   const [displayIndex, setDisplayIndex] = React.useState(0);
   const question = questions[displayIndex] ?? null;
   const [swipeProgress, setSwipeProgress] = React.useState(0);
-  const [swipeDirection, setSwipeDirection] = React.useState<"left" | "right" | null>(null);
+  const [swipeDirection, setSwipeDirection] = React.useState<
+    "left" | "right" | null
+  >(null);
   const [voteHistory, setVoteHistory] = React.useState<VoteHistoryItem[]>([]);
   const [cardOpacity, setCardOpacity] = React.useState(1);
   const [searchFilter, setSearchFilter] = React.useState<SearchFilter>("all");
@@ -99,18 +117,33 @@ export default function ExploreScreen() {
   const entryScale = React.useRef(new Animated.Value(1)).current;
   const chevronWidth = React.useRef(new Animated.Value(0)).current;
   const chevronOpacity = React.useRef(new Animated.Value(0)).current;
-  const blurTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  const blurTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const focusedSearchInputRef = React.useRef<TextInput>(null);
   const hasFetchedRef = React.useRef(false);
-  const supabaseRef = React.useRef<ReturnType<typeof createClerkSupabaseClient> | null>(null);
+  const supabaseRef = React.useRef<ReturnType<
+    typeof createClerkSupabaseClient
+  > | null>(null);
   const getTokenRef = React.useRef(getToken);
+  const userRef = React.useRef(user);
+  const questionsRef = React.useRef(questions);
+  const displayIndexRef = React.useRef(displayIndex);
+  const voteHistoryRef = React.useRef(voteHistory);
+  const initiallyVotedIdsRef = React.useRef<Set<string>>(new Set());
+  const pendingUndoIdsRef = React.useRef<Set<string>>(new Set());
 
-  // Keep refs in sync
   getTokenRef.current = getToken;
+  userRef.current = user;
+  questionsRef.current = questions;
+  displayIndexRef.current = displayIndex;
+  voteHistoryRef.current = voteHistory;
 
   const getSupabase = () => {
     if (!supabaseRef.current) {
-      supabaseRef.current = createClerkSupabaseClient({ getToken: getTokenRef.current });
+      supabaseRef.current = createClerkSupabaseClient({
+        getToken: getTokenRef.current,
+      });
     }
     return supabaseRef.current;
   };
@@ -122,6 +155,7 @@ export default function ExploreScreen() {
 
     try {
       const supabase = getSupabase();
+      const currentUser = userRef.current;
       const dbQuestions = await getQuestions(supabase, { limit: 100 });
 
       if (dbQuestions.length === 0) {
@@ -130,12 +164,16 @@ export default function ExploreScreen() {
       }
 
       const questionIds = dbQuestions.map((q) => q.id);
-      const voteCounts = await getVoteCounts(supabase, questionIds);
+      const [voteCounts, userVotesMap] = await Promise.all([
+        getVoteCounts(supabase, questionIds),
+        currentUser
+          ? getUserVotes(supabase, currentUser.id, questionIds)
+          : Promise.resolve(new Map<string, "left" | "right">()),
+      ]);
 
-      // Get unique creator IDs and fetch their profiles
       const creatorIds = [...new Set(dbQuestions.map((q) => q.user_id))];
       const profiles = await Promise.all(
-        creatorIds.map((id) => getProfile(supabase, id).catch(() => null))
+        creatorIds.map((id) => getProfile(supabase, id).catch(() => null)),
       );
       const profileMap = new Map<string, string | null>();
       creatorIds.forEach((id, i) => {
@@ -149,10 +187,21 @@ export default function ExploreScreen() {
         profileMap.set(id, displayName);
       });
 
+      initiallyVotedIdsRef.current = new Set(userVotesMap.keys());
+      pendingUndoIdsRef.current.clear();
+
       const mappedQuestions = dbQuestions.map((dbQ) => {
         const votes = voteCounts.get(dbQ.id) ?? { left: 0, right: 0 };
         const displayName = profileMap.get(dbQ.user_id) ?? null;
-        return mapDbQuestionToQuestion(dbQ, votes, displayName, dbQ.is_anonymous);
+        const userVote = userVotesMap.get(dbQ.id);
+        return mapDbQuestionToQuestion(
+          dbQ,
+          votes,
+          displayName,
+          dbQ.is_anonymous,
+          currentUser?.id ?? null,
+          userVote,
+        );
       });
 
       setQuestions(mappedQuestions);
@@ -164,12 +213,83 @@ export default function ExploreScreen() {
     }
   }, []);
 
-  // Fetch questions on mount
   React.useEffect(() => {
     if (!user || hasFetchedRef.current) return;
     hasFetchedRef.current = true;
     fetchQuestions();
   }, [user, fetchQuestions]);
+
+  const supabase = React.useMemo(() => {
+    if (!userRef.current) return null;
+    return getSupabase();
+  }, []);
+
+  const refreshVoteCounts = React.useCallback(async (questionId: string) => {
+    const currentUser = userRef.current;
+    if (!currentUser) return;
+
+    const supabase = getSupabase();
+    const [updatedVoteCounts, userVotesMap] = await Promise.all([
+      getVoteCounts(supabase, [questionId]),
+      getUserVotes(supabase, currentUser.id, [questionId]),
+    ]);
+
+    const newCounts = updatedVoteCounts.get(questionId) ?? {
+      left: 0,
+      right: 0,
+    };
+    const userVote = userVotesMap.get(questionId);
+
+    setQuestions((prev) => {
+      const updated = [...prev];
+      const idx = updated.findIndex((q) => q.id === questionId);
+      if (idx !== -1) {
+        const question = updated[idx];
+        // Don't update hasVoted for questions with pending undo
+        const isPendingUndo = pendingUndoIdsRef.current.has(questionId);
+        updated[idx] = {
+          ...question,
+          votes: newCounts,
+          hasVoted: isPendingUndo ? question.hasVoted : userVote !== undefined,
+          userVote: isPendingUndo ? question.userVote : userVote,
+        };
+      }
+      return updated;
+    });
+  }, []);
+
+  const questionIds = React.useMemo(() => {
+    return questions.map((q) => q.id);
+  }, [questions]);
+
+  useRealtimeVoteCounts(supabase, questionIds, refreshVoteCounts);
+
+  // Sync user vote statuses when tab comes into focus
+  const syncUserVotes = React.useCallback(async () => {
+    const currentUser = userRef.current;
+    if (!currentUser || questions.length === 0) return;
+
+    const supabase = getSupabase();
+    const ids = questions.map((q) => q.id);
+    const userVotesMap = await getUserVotes(supabase, currentUser.id, ids);
+
+    setQuestions((prev) =>
+      prev.map((q) => {
+        // Don't update questions with pending undo
+        if (pendingUndoIdsRef.current.has(q.id)) return q;
+        const userVote = userVotesMap.get(q.id);
+        const hasVoted = userVote !== undefined;
+        if (q.hasVoted === hasVoted && q.userVote === userVote) return q;
+        return { ...q, hasVoted, userVote };
+      }),
+    );
+  }, [questions]);
+
+  useFocusEffect(
+    React.useCallback(() => {
+      syncUserVotes();
+    }, [syncUserVotes]),
+  );
 
   const handleRefresh = React.useCallback(() => {
     fetchQuestions(true);
@@ -202,7 +322,6 @@ export default function ExploreScreen() {
     (question: Question) => {
       const foundIndex = questions.findIndex((q) => q.id === question.id);
       if (foundIndex >= 0) {
-        setIndex(foundIndex);
         setDisplayIndex(foundIndex);
         setViewMode("card");
         position.setValue({ x: 0, y: 0 });
@@ -212,7 +331,7 @@ export default function ExploreScreen() {
         entryScale.setValue(1);
       }
     },
-    [questions, position, entryScale]
+    [questions, position, entryScale],
   );
 
   const handleBackToList = React.useCallback(() => {
@@ -223,7 +342,16 @@ export default function ExploreScreen() {
     position.setValue({ x: 0, y: 0 });
   }, [position]);
 
-  const resetCard = React.useCallback(() => {
+  const actionsRef = React.useRef({
+    recordVote: (_direction: "left" | "right") => {},
+    advance: (_direction: "left" | "right" | null) => {},
+    resetCard: () => {},
+    forceSwipe: (_direction: "left" | "right") => {},
+    skip: () => {},
+    undo: () => {},
+  });
+
+  actionsRef.current.resetCard = () => {
     Animated.spring(position, {
       toValue: { x: 0, y: 0 },
       useNativeDriver: false,
@@ -232,102 +360,181 @@ export default function ExploreScreen() {
       setSwipeProgress(0);
       setSwipeDirection(null);
     });
-  }, [position]);
+  };
 
-  const recordVote = React.useCallback(
-    (direction: "left" | "right") => {
-      setQuestions((prev) => {
-        const updated = [...prev];
-        const currentQ = updated[index];
-        if (currentQ) {
-          const currentVotes = currentQ.votes ?? { left: 0, right: 0 };
-          updated[index] = {
-            ...currentQ,
-            votes: {
-              ...currentVotes,
-              [direction]: currentVotes[direction] + 1,
-            },
-          };
-        }
-        return updated;
-      });
-      setVoteHistory((prev) => [...prev, { questionIndex: index, direction }]);
-    },
-    [index]
-  );
+  actionsRef.current.recordVote = async (direction: "left" | "right") => {
+    const currentUser = userRef.current;
+    const currentQuestions = questionsRef.current;
+    const currentIndex = displayIndexRef.current;
+    const currentQuestion = currentQuestions[currentIndex];
 
-  const advance = React.useCallback(
-    (direction: "left" | "right" | null = null) => {
-      if (direction) {
-        recordVote(direction);
-      }
+    if (!currentUser || !currentQuestion) return;
 
-      const nextIdx = (displayIndex + 1) >= questions.length ? 0 : displayIndex + 1;
-
-      setSwipeProgress(0);
-      setSwipeDirection(null);
-      setCardOpacity(0);
-      setDisplayIndex(nextIdx);
-      setIndex(nextIdx);
-    },
-    [questions.length, recordVote, displayIndex]
-  );
-
-  const skip = React.useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    advance(null);
-  }, [advance]);
-
-  const undo = React.useCallback(() => {
-    if (voteHistory.length === 0) return;
-
-    const lastVote = voteHistory[voteHistory.length - 1];
-    const previousIndex = lastVote.questionIndex;
+    const wasVotedBeforeSession = initiallyVotedIdsRef.current.has(
+      currentQuestion.id,
+    );
+    if (wasVotedBeforeSession || currentQuestion.isOwnQuestion) return;
 
     setQuestions((prev) => {
       const updated = [...prev];
-      const votedQ = updated[previousIndex];
-      if (votedQ) {
-        const currentVotes = votedQ.votes ?? { left: 0, right: 0 };
-        updated[previousIndex] = {
-          ...votedQ,
-          votes: {
-            ...currentVotes,
-            [lastVote.direction]: Math.max(0, currentVotes[lastVote.direction] - 1),
-          },
+      const q = updated[currentIndex];
+      if (q) {
+        const votes = q.votes ?? { left: 0, right: 0 };
+        updated[currentIndex] = {
+          ...q,
+          votes: { ...votes, [direction]: votes[direction] + 1 },
+          hasVoted: true,
+          userVote: direction,
         };
       }
       return updated;
     });
 
+    setVoteHistory((prev) => [
+      ...prev,
+      {
+        questionId: currentQuestion.id,
+        questionIndex: currentIndex,
+        direction,
+      },
+    ]);
+
+    const supabase = getSupabase();
+    try {
+      await createVote(supabase, currentQuestion.id, currentUser.id, direction);
+
+      const updatedVoteCounts = await getVoteCounts(supabase, [
+        currentQuestion.id,
+      ]);
+      const newCounts = updatedVoteCounts.get(currentQuestion.id) ?? {
+        left: 0,
+        right: 0,
+      };
+
+      setQuestions((prev) => {
+        if (pendingUndoIdsRef.current.has(currentQuestion.id)) {
+          return prev;
+        }
+        const updated = [...prev];
+        const q = updated[currentIndex];
+        if (q && q.id === currentQuestion.id) {
+          updated[currentIndex] = {
+            ...q,
+            votes: newCounts,
+            hasVoted: true,
+            userVote: direction,
+          };
+        }
+        return updated;
+      });
+    } catch (err) {
+      console.error("Failed to record vote:", err);
+      setQuestions((prev) => {
+        const updated = [...prev];
+        const q = updated[currentIndex];
+        if (q && q.id === currentQuestion.id) {
+          const votes = q.votes ?? { left: 0, right: 0 };
+          updated[currentIndex] = {
+            ...q,
+            votes: {
+              ...votes,
+              [direction]: Math.max(0, votes[direction] - 1),
+            },
+            hasVoted: false,
+            userVote: undefined,
+          };
+        }
+        return updated;
+      });
+      setVoteHistory((prev) => prev.slice(0, -1));
+    }
+  };
+
+  actionsRef.current.advance = (direction: "left" | "right" | null) => {
+    if (direction) {
+      actionsRef.current.recordVote(direction);
+    }
+
+    const currentQuestions = questionsRef.current;
+    const currentIndex = displayIndexRef.current;
+    const nextIdx =
+      currentIndex + 1 >= currentQuestions.length ? 0 : currentIndex + 1;
+
+    setSwipeProgress(0);
+    setSwipeDirection(null);
+    setCardOpacity(0);
+    setDisplayIndex(nextIdx);
+  };
+
+  actionsRef.current.forceSwipe = (direction: "left" | "right") => {
+    const x = direction === "right" ? SWIPE_OUT_DISTANCE : -SWIPE_OUT_DISTANCE;
+
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setSwipeProgress(0);
+    setSwipeDirection(null);
+
+    Animated.timing(position, {
+      toValue: { x, y: 0 },
+      duration: 200,
+      useNativeDriver: false,
+    }).start(() => {
+      actionsRef.current.advance(direction);
+    });
+  };
+
+  actionsRef.current.skip = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    actionsRef.current.advance(null);
+  };
+
+  actionsRef.current.undo = () => {
+    const currentUser = userRef.current;
+    const history = voteHistoryRef.current;
+
+    if (history.length === 0 || !currentUser) return;
+
+    const lastVote = history[history.length - 1];
+    const previousIndex = lastVote.questionIndex!;
+    const questionId = lastVote.questionId;
+
+    const wasVotedBeforeSession = Boolean(
+      questionId && initiallyVotedIdsRef.current.has(questionId),
+    );
+
+    setQuestions((prev) => {
+      const updated = [...prev];
+      const q = updated[previousIndex];
+      if (q && q.id === questionId) {
+        const votes = q.votes ?? { left: 0, right: 0 };
+        updated[previousIndex] = {
+          ...q,
+          votes: {
+            ...votes,
+            [lastVote.direction]: Math.max(0, votes[lastVote.direction] - 1),
+          },
+          hasVoted: wasVotedBeforeSession,
+          userVote: wasVotedBeforeSession ? q.userVote : undefined,
+        };
+      }
+      return updated;
+    });
+
+    if (questionId && !wasVotedBeforeSession) {
+      pendingUndoIdsRef.current.add(questionId);
+      const supabase = getSupabase();
+      deleteVote(supabase, questionId, currentUser.id).catch((err) => {
+        console.error("Failed to delete vote:", err);
+      });
+    }
+
     setVoteHistory((prev) => prev.slice(0, -1));
     setDisplayIndex(previousIndex);
-    setIndex(previousIndex);
     position.setValue({ x: 0, y: 0 });
     setSwipeProgress(0);
     setSwipeDirection(null);
     setCardOpacity(1);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-  }, [voteHistory, position]);
-
-  const forceSwipe = React.useCallback(
-    (direction: "left" | "right") => {
-      const x = direction === "right" ? SWIPE_OUT_DISTANCE : -SWIPE_OUT_DISTANCE;
-
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      setSwipeProgress(0);
-      setSwipeDirection(null);
-
-      Animated.timing(position, {
-        toValue: { x, y: 0 },
-        duration: 200,
-        useNativeDriver: false,
-      }).start(() => {
-        advance(direction);
-      });
-    },
-    [position, advance]
-  );
+  };
 
   const panResponder = React.useMemo(
     () =>
@@ -353,30 +560,34 @@ export default function ExploreScreen() {
         },
 
         onPanResponderRelease: (evt, gesture) => {
-          if (evt.nativeEvent.pageX < LEFT_EDGE_THRESHOLD && gesture.dx > SWIPE_THRESHOLD) {
+          if (
+            evt.nativeEvent.pageX < LEFT_EDGE_THRESHOLD &&
+            gesture.dx > SWIPE_THRESHOLD
+          ) {
             handleBackToList();
             position.setValue({ x: 0, y: 0 });
             return;
           }
 
           if (gesture.dx > SWIPE_THRESHOLD) {
-            forceSwipe("right");
+            actionsRef.current.forceSwipe("right");
           } else if (gesture.dx < -SWIPE_THRESHOLD) {
-            forceSwipe("left");
+            actionsRef.current.forceSwipe("left");
           } else {
-            resetCard();
+            actionsRef.current.resetCard();
           }
         },
 
         onPanResponderTerminate: () => {
-          resetCard();
+          actionsRef.current.resetCard();
         },
       }),
-    [resetCard, forceSwipe, position, handleBackToList]
+    [position, handleBackToList],
   );
 
   const autocompleteSuggestions = React.useMemo(() => {
-    if (!searchQuery.trim() || searchQuery.length < 1) return { questions: [] as string[], users: [] as User[] };
+    if (!searchQuery.trim() || searchQuery.length < 1)
+      return { questions: [] as string[], users: [] as User[] };
 
     const query = searchQuery.toLowerCase();
     const questionSuggestions = new Set<string>();
@@ -396,9 +607,9 @@ export default function ExploreScreen() {
       }
     });
 
-    const userSuggestions = users.filter(
-      (u) => u.username.toLowerCase().includes(query)
-    ).slice(0, 3);
+    const userSuggestions = users
+      .filter((u) => u.username.toLowerCase().includes(query))
+      .slice(0, 3);
 
     return {
       questions: Array.from(questionSuggestions).slice(0, 5),
@@ -416,7 +627,7 @@ export default function ExploreScreen() {
         q.prompt.toLowerCase().includes(query) ||
         q.meta?.category?.toLowerCase().includes(query) ||
         q.left.label.toLowerCase().includes(query) ||
-        q.right.label.toLowerCase().includes(query)
+        q.right.label.toLowerCase().includes(query),
     );
   }, [performedSearch, questions]);
 
@@ -474,7 +685,7 @@ export default function ExploreScreen() {
         setSearchFocused(true);
       }
     },
-    [performedSearch]
+    [performedSearch],
   );
 
   const handleSearchFocus = React.useCallback(() => {
@@ -518,7 +729,7 @@ export default function ExploreScreen() {
       addToRecentSearches(trimmed);
       setSearchFocused(false);
     },
-    [clearBlurTimeout, addToRecentSearches]
+    [clearBlurTimeout, addToRecentSearches],
   );
 
   const handleRecentSearchDelete = React.useCallback(
@@ -527,7 +738,7 @@ export default function ExploreScreen() {
       setRecentSearches((prev) => prev.filter((q) => q !== query));
       setSearchFocused(true);
     },
-    [clearBlurTimeout]
+    [clearBlurTimeout],
   );
 
   const handleAutocompletePress = React.useCallback(
@@ -541,7 +752,7 @@ export default function ExploreScreen() {
       addToRecentSearches(trimmed);
       setSearchFocused(false);
     },
-    [clearBlurTimeout, addToRecentSearches]
+    [clearBlurTimeout, addToRecentSearches],
   );
 
   React.useEffect(() => {
@@ -600,9 +811,7 @@ export default function ExploreScreen() {
   }, [viewMode]);
 
   React.useEffect(() => {
-    // Focus the search input when transitioning to focused state
     if (searchFocused && !prevSearchFocusedRef.current) {
-      // Use requestAnimationFrame to ensure the new component is mounted
       requestAnimationFrame(() => {
         focusedSearchInputRef.current?.focus();
       });
@@ -628,7 +837,6 @@ export default function ExploreScreen() {
       chevronOpacity.setValue(0);
       return true;
     }
-    // Already at root - trigger refresh
     handleRefresh();
     return true;
   }, [handleBackToList, chevronWidth, chevronOpacity, handleRefresh]);
@@ -641,15 +849,39 @@ export default function ExploreScreen() {
   if (viewMode === "card") {
     if (!question) {
       return (
-        <View style={{ flex: 1, backgroundColor: "black", padding: 24, justifyContent: "center", alignItems: "center" }}>
-          <Text style={{ color: "white", fontSize: 18 }}>No questions available</Text>
-          <Text style={{ color: "#aaa", fontSize: 14, marginTop: 8 }}>Check back later!</Text>
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: "black",
+            padding: 24,
+            justifyContent: "center",
+            alignItems: "center",
+          }}
+        >
+          <Text style={{ color: "white", fontSize: 18 }}>
+            No questions available
+          </Text>
+          <Text style={{ color: "#aaa", fontSize: 14, marginTop: 8 }}>
+            Check back later!
+          </Text>
         </View>
       );
     }
 
-    const { leftPercentage, rightPercentage, leftVotes, rightVotes, leftHighlight, rightHighlight } =
-      calculateVoteData(question, swipeProgress, swipeDirection);
+    const isResultsMode = question.hasVoted || question.isOwnQuestion;
+
+    const {
+      leftPercentage,
+      rightPercentage,
+      leftVotes,
+      rightVotes,
+      leftHighlight,
+      rightHighlight,
+    } = calculateVoteData(
+      question,
+      isResultsMode ? 0 : swipeProgress,
+      isResultsMode ? null : swipeDirection,
+    );
 
     return (
       <View style={{ flex: 1, backgroundColor: "black", padding: 24 }}>
@@ -665,15 +897,27 @@ export default function ExploreScreen() {
             zIndex: 10,
           }}
         >
-          <ActionButton onPress={handleBackToList} icon="arrow-left" label="Back" />
+          <ActionButton
+            onPress={handleBackToList}
+            icon='arrow-left'
+            label='Back'
+          />
 
           {voteHistory.length > 0 ? (
-            <ActionButton onPress={undo} icon="undo" label="Undo" />
+            <ActionButton
+              onPress={() => actionsRef.current.undo()}
+              icon='undo'
+              label='Undo'
+            />
           ) : (
             <View style={{ minWidth: 60 }} />
           )}
 
-          <ActionButton onPress={skip} icon="arrow-right" label="Skip" />
+          <ActionButton
+            onPress={() => actionsRef.current.skip()}
+            icon='arrow-right'
+            label={isResultsMode ? "Next" : "Skip"}
+          />
         </View>
 
         <View style={{ flex: 1, justifyContent: "center" }}>
@@ -693,8 +937,20 @@ export default function ExploreScreen() {
               { transform: [...cardStyle.transform, { scale: entryScale }] },
             ]}
           >
-            <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: "#222" }}>
-              <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
+            <View
+              style={{
+                padding: 16,
+                borderBottomWidth: 1,
+                borderBottomColor: "#222",
+              }}
+            >
+              <View
+                style={{
+                  flexDirection: "row",
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                }}
+              >
                 <Text style={{ color: "#aaa", fontSize: 12 }}>
                   {question.meta?.category ?? "General"}
                 </Text>
@@ -705,26 +961,51 @@ export default function ExploreScreen() {
                       <Pressable
                         onPress={(e) => {
                           e.stopPropagation();
-                          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                          Haptics.impactAsync(
+                            Haptics.ImpactFeedbackStyle.Light,
+                          );
                           router.push({
                             pathname: "/user-profile",
-                            params: { username: question.meta?.createdBy, userId: question.meta?.createdBy?.toLowerCase().replace(/\s+/g, "") || "1" },
+                            params: {
+                              username: question.meta?.createdBy,
+                              userId:
+                                question.meta?.createdBy
+                                  ?.toLowerCase()
+                                  .replace(/\s+/g, "") || "1",
+                            },
                           });
                         }}
                       >
                         {({ pressed }) => (
-                          <Text style={{ color: "#aaa", fontSize: 12, textDecorationLine: pressed ? "underline" : "none" }}>
+                          <Text
+                            style={{
+                              color: "#aaa",
+                              fontSize: 12,
+                              textDecorationLine: pressed
+                                ? "underline"
+                                : "none",
+                            }}
+                          >
                             {question.meta?.createdBy}
                           </Text>
                         )}
                       </Pressable>
                     ) : (
-                      <Text style={{ color: "#aaa", fontSize: 12 }}>{question.meta.createdBy}</Text>
+                      <Text style={{ color: "#aaa", fontSize: 12 }}>
+                        {question.meta.createdBy}
+                      </Text>
                     )}
                   </>
                 )}
               </View>
-              <Text style={{ color: "white", fontSize: 20, fontWeight: "800", marginTop: 6 }}>
+              <Text
+                style={{
+                  color: "white",
+                  fontSize: 20,
+                  fontWeight: "800",
+                  marginTop: 6,
+                }}
+              >
                 {question.title}
               </Text>
             </View>
@@ -734,7 +1015,9 @@ export default function ExploreScreen() {
               contentContainerStyle={{ padding: 16, gap: 12 }}
               nestedScrollEnabled
             >
-              <Text style={{ color: "white", fontSize: 16, lineHeight: 22 }}>{question.prompt}</Text>
+              <Text style={{ color: "white", fontSize: 16, lineHeight: 22 }}>
+                {question.prompt}
+              </Text>
 
               {question.promptImageUrl && (
                 <Image
@@ -744,31 +1027,52 @@ export default function ExploreScreen() {
               )}
             </ScrollView>
 
-            <View style={{ padding: 16, gap: 12, borderTopWidth: 1, borderTopColor: "#222" }}>
+            <View
+              style={{
+                padding: 16,
+                gap: 12,
+                borderTopWidth: 1,
+                borderTopColor: "#222",
+              }}
+            >
               <ChoiceOption
                 choice={question.left}
-                direction="left"
+                direction='left'
                 percentage={leftPercentage}
                 votes={leftVotes}
-                swipeProgress={swipeProgress}
-                swipeDirection={swipeDirection}
-                isSelected={swipeDirection === "left"}
-                highlight={leftHighlight}
+                swipeProgress={isResultsMode ? 0 : swipeProgress}
+                swipeDirection={isResultsMode ? null : swipeDirection}
+                isSelected={
+                  isResultsMode
+                    ? question.userVote === "left"
+                    : swipeDirection === "left"
+                }
+                highlight={isResultsMode ? 0 : leftHighlight}
+                resultsMode={isResultsMode}
               />
 
               <ChoiceOption
                 choice={question.right}
-                direction="right"
+                direction='right'
                 percentage={rightPercentage}
                 votes={rightVotes}
-                swipeProgress={swipeProgress}
-                swipeDirection={swipeDirection}
-                isSelected={swipeDirection === "right"}
-                highlight={rightHighlight}
+                swipeProgress={isResultsMode ? 0 : swipeProgress}
+                swipeDirection={isResultsMode ? null : swipeDirection}
+                isSelected={
+                  isResultsMode
+                    ? question.userVote === "right"
+                    : swipeDirection === "right"
+                }
+                highlight={isResultsMode ? 0 : rightHighlight}
+                resultsMode={isResultsMode}
               />
 
               <Text style={{ color: "#777", fontSize: 12 }}>
-                Tip: Scroll vertically in the prompt. Swipe left or right to pick.
+                {isResultsMode
+                  ? question.isOwnQuestion
+                    ? "This is your question. Swipe to see the next one."
+                    : "You've already voted. Swipe to see the next one."
+                  : "Tip: Scroll vertically in the prompt. Swipe left or right to pick."}
               </Text>
             </View>
           </Animated.View>
@@ -809,7 +1113,7 @@ export default function ExploreScreen() {
                 opacity: pressed ? 0.6 : 1,
               })}
             >
-              <Octicons name="chevron-left" size={20} color="#aaa" />
+              <Octicons name='chevron-left' size={20} color='#aaa' />
             </Pressable>
           </Animated.View>
           <Animated.View style={{ flex: 1 }}>
@@ -839,15 +1143,24 @@ export default function ExploreScreen() {
                   borderBottomColor: "#222",
                 }}
               >
-                <Text style={{ color: "#aaa", fontSize: 14, fontWeight: "600" }}>Recent</Text>
+                <Text
+                  style={{ color: "#aaa", fontSize: 14, fontWeight: "600" }}
+                >
+                  Recent
+                </Text>
                 {recentSearches.length > 0 && (
                   <Pressable onPress={() => setRecentSearches([])}>
-                    <Text style={{ color: "#666", fontSize: 14 }}>Clear all</Text>
+                    <Text style={{ color: "#666", fontSize: 14 }}>
+                      Clear all
+                    </Text>
                   </Pressable>
                 )}
               </View>
               {recentSearches.length > 0 ? (
-                <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+                <ScrollView
+                  showsVerticalScrollIndicator={false}
+                  keyboardShouldPersistTaps='handled'
+                >
                   {recentSearches.map((item, idx) => (
                     <RecentSearchItem
                       key={`${item}-${idx}`}
@@ -858,17 +1171,40 @@ export default function ExploreScreen() {
                   ))}
                 </ScrollView>
               ) : (
-                <View style={{ flex: 1, justifyContent: "center", alignItems: "center", padding: 24 }}>
-                  <Text style={{ color: "#666", fontSize: 14 }}>No recent searches</Text>
+                <View
+                  style={{
+                    flex: 1,
+                    justifyContent: "center",
+                    alignItems: "center",
+                    padding: 24,
+                  }}
+                >
+                  <Text style={{ color: "#666", fontSize: 14 }}>
+                    No recent searches
+                  </Text>
                 </View>
               )}
             </>
           ) : (
-            <ScrollView showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              keyboardShouldPersistTaps='handled'
+            >
               {autocompleteSuggestions.users.length > 0 && (
                 <>
-                  <View style={{ paddingVertical: 12, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: "#222" }}>
-                    <Text style={{ color: "#aaa", fontSize: 14, fontWeight: "600" }}>Users</Text>
+                  <View
+                    style={{
+                      paddingVertical: 12,
+                      paddingHorizontal: 16,
+                      borderBottomWidth: 1,
+                      borderBottomColor: "#222",
+                    }}
+                  >
+                    <Text
+                      style={{ color: "#aaa", fontSize: 14, fontWeight: "600" }}
+                    >
+                      Users
+                    </Text>
                   </View>
                   {autocompleteSuggestions.users.map((user) => (
                     <Pressable
@@ -895,7 +1231,9 @@ export default function ExploreScreen() {
                           width: 32,
                           height: 32,
                           borderRadius: 16,
-                          backgroundColor: user.avatarUrl ? "transparent" : "#333",
+                          backgroundColor: user.avatarUrl
+                            ? "transparent"
+                            : "#333",
                           marginRight: 12,
                           overflow: "hidden",
                         }}
@@ -915,35 +1253,68 @@ export default function ExploreScreen() {
                               justifyContent: "center",
                             }}
                           >
-                            <Text style={{ color: "#aaa", fontSize: 14, fontWeight: "600" }}>
+                            <Text
+                              style={{
+                                color: "#aaa",
+                                fontSize: 14,
+                                fontWeight: "600",
+                              }}
+                            >
                               {user.username[0].toUpperCase()}
                             </Text>
                           </View>
                         )}
                       </View>
                       <View style={{ flex: 1 }}>
-                        <Text style={{ color: "white", fontSize: 16 }}>{user.username}</Text>
+                        <Text style={{ color: "white", fontSize: 16 }}>
+                          {user.username}
+                        </Text>
                       </View>
-                      <Octicons name="chevron-right" size={16} color="#666" />
+                      <Octicons name='chevron-right' size={16} color='#666' />
                     </Pressable>
                   ))}
                 </>
               )}
               {autocompleteSuggestions.questions.length > 0 && (
                 <>
-                  <View style={{ paddingVertical: 12, paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: "#222" }}>
-                    <Text style={{ color: "#aaa", fontSize: 14, fontWeight: "600" }}>Questions</Text>
+                  <View
+                    style={{
+                      paddingVertical: 12,
+                      paddingHorizontal: 16,
+                      borderBottomWidth: 1,
+                      borderBottomColor: "#222",
+                    }}
+                  >
+                    <Text
+                      style={{ color: "#aaa", fontSize: 14, fontWeight: "600" }}
+                    >
+                      Questions
+                    </Text>
                   </View>
                   {autocompleteSuggestions.questions.map((item, idx) => (
-                    <AutocompleteItem key={`${item}-${idx}`} suggestion={item} onPress={() => handleAutocompletePress(item)} />
+                    <AutocompleteItem
+                      key={`${item}-${idx}`}
+                      suggestion={item}
+                      onPress={() => handleAutocompletePress(item)}
+                    />
                   ))}
                 </>
               )}
-              {autocompleteSuggestions.users.length === 0 && autocompleteSuggestions.questions.length === 0 && (
-                <View style={{ flex: 1, justifyContent: "center", alignItems: "center", padding: 24 }}>
-                  <Text style={{ color: "#666", fontSize: 14 }}>No suggestions found</Text>
-                </View>
-              )}
+              {autocompleteSuggestions.users.length === 0 &&
+                autocompleteSuggestions.questions.length === 0 && (
+                  <View
+                    style={{
+                      flex: 1,
+                      justifyContent: "center",
+                      alignItems: "center",
+                      padding: 24,
+                    }}
+                  >
+                    <Text style={{ color: "#666", fontSize: 14 }}>
+                      No suggestions found
+                    </Text>
+                  </View>
+                )}
             </ScrollView>
           )}
         </View>
@@ -986,19 +1357,19 @@ export default function ExploreScreen() {
             }}
           >
             <SearchFilterTab
-              label="All"
+              label='All'
               isActive={searchFilter === "all"}
               onPress={() => setSearchFilter("all")}
               count={filteredUsers.length + filteredQuestions.length}
             />
             <SearchFilterTab
-              label="Users"
+              label='Users'
               isActive={searchFilter === "users"}
               onPress={() => setSearchFilter("users")}
               count={filteredUsers.length}
             />
             <SearchFilterTab
-              label="Questions"
+              label='Questions'
               isActive={searchFilter === "questions"}
               onPress={() => setSearchFilter("questions")}
               count={filteredQuestions.length}
@@ -1009,51 +1380,74 @@ export default function ExploreScreen() {
             contentContainerStyle={{ padding: 16 }}
             showsVerticalScrollIndicator={false}
           >
-            {(searchFilter === "all" || searchFilter === "users") && filteredUsers.length > 0 && (
-              <>
-                {searchFilter === "all" && (
-                  <Text style={{ color: "#aaa", fontSize: 14, fontWeight: "600", marginBottom: 12 }}>
-                    Users
-                  </Text>
-                )}
-                {filteredUsers.map((user) => (
-                  <UserSearchCard
-                    key={user.id}
-                    user={user}
-                    onPress={() => {
-                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                      router.push({
-                        pathname: "/user-profile",
-                        params: { username: user.username, userId: user.id },
-                      });
-                    }}
-                  />
-                ))}
-                {searchFilter === "all" && filteredQuestions.length > 0 && (
-                  <View style={{ height: 16 }} />
-                )}
-              </>
-            )}
+            {(searchFilter === "all" || searchFilter === "users") &&
+              filteredUsers.length > 0 && (
+                <>
+                  {searchFilter === "all" && (
+                    <Text
+                      style={{
+                        color: "#aaa",
+                        fontSize: 14,
+                        fontWeight: "600",
+                        marginBottom: 12,
+                      }}
+                    >
+                      Users
+                    </Text>
+                  )}
+                  {filteredUsers.map((user) => (
+                    <UserSearchCard
+                      key={user.id}
+                      user={user}
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        router.push({
+                          pathname: "/user-profile",
+                          params: { username: user.username, userId: user.id },
+                        });
+                      }}
+                    />
+                  ))}
+                  {searchFilter === "all" && filteredQuestions.length > 0 && (
+                    <View style={{ height: 16 }} />
+                  )}
+                </>
+              )}
 
-            {(searchFilter === "all" || searchFilter === "questions") && filteredQuestions.length > 0 && (
-              <>
-                {searchFilter === "all" && (
-                  <Text style={{ color: "#aaa", fontSize: 14, fontWeight: "600", marginBottom: 12 }}>
-                    Questions
-                  </Text>
-                )}
-                {filteredQuestions.map((question) => (
-                  <QuestionCard
-                    key={question.id}
-                    question={question}
-                    onPress={() => handleCardPress(question)}
-                  />
-                ))}
-              </>
-            )}
+            {(searchFilter === "all" || searchFilter === "questions") &&
+              filteredQuestions.length > 0 && (
+                <>
+                  {searchFilter === "all" && (
+                    <Text
+                      style={{
+                        color: "#aaa",
+                        fontSize: 14,
+                        fontWeight: "600",
+                        marginBottom: 12,
+                      }}
+                    >
+                      Questions
+                    </Text>
+                  )}
+                  {filteredQuestions.map((question) => (
+                    <QuestionCard
+                      key={question.id}
+                      question={question}
+                      onPress={() => handleCardPress(question)}
+                    />
+                  ))}
+                </>
+              )}
 
             {filteredUsers.length === 0 && filteredQuestions.length === 0 && (
-              <View style={{ flex: 1, justifyContent: "center", alignItems: "center", padding: 24 }}>
+              <View
+                style={{
+                  flex: 1,
+                  justifyContent: "center",
+                  alignItems: "center",
+                  padding: 24,
+                }}
+              >
                 <Text style={{ color: "#666", fontSize: 14 }}>
                   No results found for {'"' + performedSearch + '"'}
                 </Text>
@@ -1061,7 +1455,14 @@ export default function ExploreScreen() {
             )}
 
             {searchFilter === "users" && filteredUsers.length === 0 && (
-              <View style={{ flex: 1, justifyContent: "center", alignItems: "center", padding: 24 }}>
+              <View
+                style={{
+                  flex: 1,
+                  justifyContent: "center",
+                  alignItems: "center",
+                  padding: 24,
+                }}
+              >
                 <Text style={{ color: "#666", fontSize: 14 }}>
                   No users found for {'"' + performedSearch + '"'}
                 </Text>
@@ -1069,7 +1470,14 @@ export default function ExploreScreen() {
             )}
 
             {searchFilter === "questions" && filteredQuestions.length === 0 && (
-              <View style={{ flex: 1, justifyContent: "center", alignItems: "center", padding: 24 }}>
+              <View
+                style={{
+                  flex: 1,
+                  justifyContent: "center",
+                  alignItems: "center",
+                  padding: 24,
+                }}
+              >
                 <Text style={{ color: "#666", fontSize: 14 }}>
                   No questions found for {'"' + performedSearch + '"'}
                 </Text>
@@ -1078,13 +1486,31 @@ export default function ExploreScreen() {
           </ScrollView>
         </>
       ) : loading ? (
-        <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-          <ActivityIndicator size="large" color="white" />
+        <View
+          style={{ flex: 1, justifyContent: "center", alignItems: "center" }}
+        >
+          <ActivityIndicator size='large' color='white' />
         </View>
       ) : questions.length === 0 ? (
-        <View style={{ flex: 1, justifyContent: "center", alignItems: "center", padding: 24 }}>
-          <Text style={{ color: "white", fontSize: 18, textAlign: "center" }}>No questions yet</Text>
-          <Text style={{ color: "#aaa", fontSize: 14, marginTop: 8, textAlign: "center" }}>
+        <View
+          style={{
+            flex: 1,
+            justifyContent: "center",
+            alignItems: "center",
+            padding: 24,
+          }}
+        >
+          <Text style={{ color: "white", fontSize: 18, textAlign: "center" }}>
+            No questions yet
+          </Text>
+          <Text
+            style={{
+              color: "#aaa",
+              fontSize: 14,
+              marginTop: 8,
+              textAlign: "center",
+            }}
+          >
             Be the first to create one!
           </Text>
         </View>
@@ -1092,14 +1518,19 @@ export default function ExploreScreen() {
         <FlatList
           data={questions}
           keyExtractor={(item) => item.id}
-          renderItem={({ item }) => <QuestionCard question={item} onPress={() => handleCardPress(item)} />}
+          renderItem={({ item }) => (
+            <QuestionCard
+              question={item}
+              onPress={() => handleCardPress(item)}
+            />
+          )}
           contentContainerStyle={{ padding: 16 }}
           showsVerticalScrollIndicator={false}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
               onRefresh={handleRefresh}
-              tintColor="#fff"
+              tintColor='#fff'
               colors={["#fff"]}
             />
           }

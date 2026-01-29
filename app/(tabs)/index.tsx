@@ -1,25 +1,31 @@
+import { ActionButton, ChoiceOption } from "@/components/voting";
+import { useRealtimeVoteCounts } from "@/lib/hooks/useRealtime";
+import { getProfile } from "@/lib/queries/profiles";
+import { Question as DbQuestion, getQuestions } from "@/lib/queries/questions";
+import {
+    createVote,
+    deleteVote,
+    getUserVotes,
+    getVoteCounts,
+} from "@/lib/queries/votes";
+import { createClerkSupabaseClient } from "@/lib/supabase";
+import type { Question, VoteHistoryItem } from "@/types";
+import { getNormalizedPercentages } from "@/utils/voting";
 import { useAuth, useUser } from "@clerk/clerk-expo";
 import * as Haptics from "expo-haptics";
 import { useRouter } from "expo-router";
 import React from "react";
 import {
-  ActivityIndicator,
-  Animated,
-  Dimensions,
-  Image,
-  PanResponder,
-  Pressable,
-  ScrollView,
-  Text,
-  View,
+    ActivityIndicator,
+    Animated,
+    Dimensions,
+    Image,
+    PanResponder,
+    Pressable,
+    ScrollView,
+    Text,
+    View,
 } from "react-native";
-import type { Question, VoteHistoryItem } from "@/types";
-import { ActionButton, ChoiceOption } from "@/components/voting";
-import { getNormalizedPercentages } from "@/utils/voting";
-import { createClerkSupabaseClient } from "@/lib/supabase";
-import { getQuestions, Question as DbQuestion } from "@/lib/queries/questions";
-import { getVoteCounts, getUserVotedQuestionIds, createVote, deleteVote } from "@/lib/queries/votes";
-import { getProfile } from "@/lib/queries/profiles";
 
 const SCREEN_W = Dimensions.get("window").width;
 const SWIPE_THRESHOLD = 0.25 * SCREEN_W;
@@ -30,10 +36,15 @@ function mapDbQuestionToQuestion(
   dbQuestion: DbQuestion,
   votes: { left: number; right: number },
   creatorUsername: string | null,
-  isAnonymous: boolean
+  isAnonymous: boolean,
+  currentUserId: string | null,
+  userVote: "left" | "right" | undefined,
 ): Question {
+  const isOwnQuestion =
+    currentUserId !== null && dbQuestion.user_id === currentUserId;
   return {
     id: dbQuestion.id,
+    visibleUserId: dbQuestion.user_id,
     title: dbQuestion.title,
     prompt: dbQuestion.prompt,
     promptImageUrl: dbQuestion.prompt_image_url ?? undefined,
@@ -53,6 +64,9 @@ function mapDbQuestionToQuestion(
       createdBy: isAnonymous ? "Anonymous" : (creatorUsername ?? "Unknown"),
     },
     createdAt: dbQuestion.created_at,
+    hasVoted: userVote !== undefined,
+    userVote,
+    isOwnQuestion,
   };
 }
 
@@ -65,24 +79,27 @@ export default function HomeScreen() {
   const [loading, setLoading] = React.useState(true);
   const [displayIndex, setDisplayIndex] = React.useState(0);
   const [swipeProgress, setSwipeProgress] = React.useState(0);
-  const [swipeDirection, setSwipeDirection] = React.useState<"left" | "right" | null>(null);
+  const [swipeDirection, setSwipeDirection] = React.useState<
+    "left" | "right" | null
+  >(null);
   const [voteHistory, setVoteHistory] = React.useState<VoteHistoryItem[]>([]);
   const [cardOpacity, setCardOpacity] = React.useState(1);
 
   const question = questions[displayIndex] ?? null;
 
-  // Refs for stable callback access
   const position = React.useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const entryScale = React.useRef(new Animated.Value(1)).current;
   const hasFetchedRef = React.useRef(false);
-  const supabaseRef = React.useRef<ReturnType<typeof createClerkSupabaseClient> | null>(null);
+  const supabaseRef = React.useRef<ReturnType<
+    typeof createClerkSupabaseClient
+  > | null>(null);
   const questionsRef = React.useRef(questions);
   const displayIndexRef = React.useRef(displayIndex);
   const voteHistoryRef = React.useRef(voteHistory);
   const userRef = React.useRef(user);
   const getTokenRef = React.useRef(getToken);
+  const initiallyVotedIdsRef = React.useRef<Set<string>>(new Set());
 
-  // Keep refs in sync
   questionsRef.current = questions;
   displayIndexRef.current = displayIndex;
   voteHistoryRef.current = voteHistory;
@@ -91,7 +108,9 @@ export default function HomeScreen() {
 
   const getSupabase = () => {
     if (!supabaseRef.current) {
-      supabaseRef.current = createClerkSupabaseClient({ getToken: getTokenRef.current });
+      supabaseRef.current = createClerkSupabaseClient({
+        getToken: getTokenRef.current,
+      });
     }
     return supabaseRef.current;
   };
@@ -105,7 +124,6 @@ export default function HomeScreen() {
     transform: [{ translateX: position.x }, { rotate }],
   };
 
-  // Fetch questions on mount
   React.useEffect(() => {
     if (!user || hasFetchedRef.current) return;
     hasFetchedRef.current = true;
@@ -122,15 +140,19 @@ export default function HomeScreen() {
         }
 
         const questionIds = dbQuestions.map((q) => q.id);
-        const [voteCounts, votedIds] = await Promise.all([
+        const [voteCounts, userVotesMap] = await Promise.all([
           getVoteCounts(supabase, questionIds),
-          getUserVotedQuestionIds(supabase, user.id),
+          getUserVotes(supabase, user.id, questionIds),
         ]);
 
-        const unvotedQuestions = dbQuestions.filter((q) => !votedIds.has(q.id));
-        const creatorIds = [...new Set(unvotedQuestions.map((q) => q.user_id))];
+        const eligibleQuestions = dbQuestions.filter(
+          (q) => !userVotesMap.has(q.id) && q.user_id !== user.id,
+        );
+        const creatorIds = [
+          ...new Set(eligibleQuestions.map((q) => q.user_id)),
+        ];
         const profiles = await Promise.all(
-          creatorIds.map((id) => getProfile(supabase, id).catch(() => null))
+          creatorIds.map((id) => getProfile(supabase, id).catch(() => null)),
         );
         const profileMap = new Map<string, string | null>();
         creatorIds.forEach((id, i) => {
@@ -144,10 +166,20 @@ export default function HomeScreen() {
           profileMap.set(id, displayName);
         });
 
-        const mappedQuestions = unvotedQuestions.map((dbQ) => {
+        initiallyVotedIdsRef.current = new Set();
+
+        const mappedQuestions = eligibleQuestions.map((dbQ) => {
           const votes = voteCounts.get(dbQ.id) ?? { left: 0, right: 0 };
           const displayName = profileMap.get(dbQ.user_id) ?? null;
-          return mapDbQuestionToQuestion(dbQ, votes, displayName, dbQ.is_anonymous);
+          const userVote = userVotesMap.get(dbQ.id);
+          return mapDbQuestionToQuestion(
+            dbQ,
+            votes,
+            displayName,
+            dbQ.is_anonymous,
+            user.id,
+            userVote,
+          );
         });
 
         setQuestions(mappedQuestions);
@@ -161,7 +193,50 @@ export default function HomeScreen() {
     fetchQuestions();
   }, [user]);
 
-  // Action handlers stored in ref so panResponder can access latest versions
+  const supabase = React.useMemo(() => {
+    if (!user) return null;
+    return getSupabase();
+  }, [user]);
+
+  const refreshVoteCounts = React.useCallback(
+    async (questionId: string) => {
+      if (!user || !supabase) return;
+
+      const [updatedVoteCounts, userVotesMap] = await Promise.all([
+        getVoteCounts(supabase, [questionId]),
+        getUserVotes(supabase, user.id, [questionId]),
+      ]);
+
+      const newCounts = updatedVoteCounts.get(questionId) ?? {
+        left: 0,
+        right: 0,
+      };
+      const userVote = userVotesMap.get(questionId);
+
+      setQuestions((prev) => {
+        const updated = [...prev];
+        const index = updated.findIndex((q) => q.id === questionId);
+        if (index !== -1) {
+          const question = updated[index];
+          updated[index] = {
+            ...question,
+            votes: newCounts,
+            hasVoted: userVote !== undefined,
+            userVote,
+          };
+        }
+        return updated;
+      });
+    },
+    [user, supabase],
+  );
+
+  const questionIds = React.useMemo(() => {
+    return questions.map((q) => q.id);
+  }, [questions]);
+
+  useRealtimeVoteCounts(supabase, questionIds, refreshVoteCounts);
+
   const actionsRef = React.useRef({
     recordVote: (_direction: "left" | "right") => {},
     advance: (_direction: "left" | "right" | null) => {},
@@ -171,13 +246,15 @@ export default function HomeScreen() {
     undo: () => {},
   });
 
-  actionsRef.current.recordVote = (direction: "left" | "right") => {
+  actionsRef.current.recordVote = async (direction: "left" | "right") => {
     const currentUser = userRef.current;
     const currentQuestions = questionsRef.current;
     const currentIndex = displayIndexRef.current;
     const currentQuestion = currentQuestions[currentIndex];
 
     if (!currentUser || !currentQuestion) return;
+
+    if (currentQuestion.hasVoted || currentQuestion.isOwnQuestion) return;
 
     setQuestions((prev) => {
       const updated = [...prev];
@@ -187,6 +264,8 @@ export default function HomeScreen() {
         updated[currentIndex] = {
           ...q,
           votes: { ...votes, [direction]: votes[direction] + 1 },
+          hasVoted: true,
+          userVote: direction,
         };
       }
       return updated;
@@ -194,13 +273,59 @@ export default function HomeScreen() {
 
     setVoteHistory((prev) => [
       ...prev,
-      { questionId: currentQuestion.id, questionIndex: currentIndex, direction },
+      {
+        questionId: currentQuestion.id,
+        questionIndex: currentIndex,
+        direction,
+      },
     ]);
 
     const supabase = getSupabase();
-    createVote(supabase, currentQuestion.id, currentUser.id, direction).catch((err) => {
+    try {
+      await createVote(supabase, currentQuestion.id, currentUser.id, direction);
+
+      const updatedVoteCounts = await getVoteCounts(supabase, [
+        currentQuestion.id,
+      ]);
+      const newCounts = updatedVoteCounts.get(currentQuestion.id) ?? {
+        left: 0,
+        right: 0,
+      };
+
+      setQuestions((prev) => {
+        const updated = [...prev];
+        const q = updated[currentIndex];
+        if (q && q.id === currentQuestion.id) {
+          updated[currentIndex] = {
+            ...q,
+            votes: newCounts,
+            hasVoted: true,
+            userVote: direction,
+          };
+        }
+        return updated;
+      });
+    } catch (err) {
       console.error("Failed to record vote:", err);
-    });
+      setQuestions((prev) => {
+        const updated = [...prev];
+        const q = updated[currentIndex];
+        if (q && q.id === currentQuestion.id) {
+          const votes = q.votes ?? { left: 0, right: 0 };
+          updated[currentIndex] = {
+            ...q,
+            votes: {
+              ...votes,
+              [direction]: Math.max(0, votes[direction] - 1),
+            },
+            hasVoted: false,
+            userVote: undefined,
+          };
+        }
+        return updated;
+      });
+      setVoteHistory((prev) => prev.slice(0, -1));
+    }
   };
 
   actionsRef.current.advance = (direction: "left" | "right" | null) => {
@@ -210,7 +335,8 @@ export default function HomeScreen() {
 
     const currentQuestions = questionsRef.current;
     const currentIndex = displayIndexRef.current;
-    const nextIdx = (currentIndex + 1) >= currentQuestions.length ? 0 : currentIndex + 1;
+    const nextIdx =
+      currentIndex + 1 >= currentQuestions.length ? 0 : currentIndex + 1;
 
     setSwipeProgress(0);
     setSwipeDirection(null);
@@ -259,10 +385,15 @@ export default function HomeScreen() {
     const lastVote = history[history.length - 1];
     const previousIndex = lastVote.questionIndex!;
 
+    const wasVotedBeforeSession: boolean = Boolean(
+      lastVote.questionId &&
+      initiallyVotedIdsRef.current.has(lastVote.questionId),
+    );
+
     setQuestions((prev) => {
       const updated = [...prev];
       const q = updated[previousIndex];
-      if (q) {
+      if (q && lastVote.questionId) {
         const votes = q.votes ?? { left: 0, right: 0 };
         updated[previousIndex] = {
           ...q,
@@ -270,10 +401,23 @@ export default function HomeScreen() {
             ...votes,
             [lastVote.direction]: Math.max(0, votes[lastVote.direction] - 1),
           },
+          hasVoted: wasVotedBeforeSession,
+          userVote: wasVotedBeforeSession ? q.userVote : undefined,
         };
       }
       return updated;
     });
+
+    if (lastVote.questionId && !wasVotedBeforeSession) {
+      const supabase = getSupabase();
+      deleteVote(supabase, lastVote.questionId, currentUser.id)
+        .then(() => {
+          refreshVoteCounts(lastVote.questionId);
+        })
+        .catch((err) => {
+          console.error("Failed to delete vote:", err);
+        });
+    }
 
     setVoteHistory((prev) => prev.slice(0, -1));
     setDisplayIndex(previousIndex);
@@ -291,7 +435,6 @@ export default function HomeScreen() {
     }
   };
 
-  // Stable pan responder - created once, uses actionsRef for latest handlers
   const panResponder = React.useMemo(
     () =>
       PanResponder.create({
@@ -318,10 +461,9 @@ export default function HomeScreen() {
           actionsRef.current.resetCard();
         },
       }),
-    [position]
+    [position],
   );
 
-  // Card entry animation
   React.useEffect(() => {
     position.setValue({ x: 0, y: 0 });
     entryScale.setValue(0.98);
@@ -338,7 +480,6 @@ export default function HomeScreen() {
     });
   }, [displayIndex, entryScale, position]);
 
-  // Track swipe progress
   React.useEffect(() => {
     const listenerId = position.x.addListener(({ value }) => {
       const absDx = Math.abs(value);
@@ -365,38 +506,88 @@ export default function HomeScreen() {
 
   if (loading) {
     return (
-      <View style={{ flex: 1, backgroundColor: "black", justifyContent: "center", alignItems: "center" }}>
-        <ActivityIndicator size="large" color="white" />
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: "black",
+          justifyContent: "center",
+          alignItems: "center",
+        }}
+      >
+        <ActivityIndicator size='large' color='white' />
       </View>
     );
   }
 
   if (!question || questions.length === 0) {
     return (
-      <View style={{ flex: 1, backgroundColor: "black", padding: 24, justifyContent: "center", alignItems: "center" }}>
-        <Text style={{ color: "white", fontSize: 18, textAlign: "center" }}>No questions to vote on</Text>
-        <Text style={{ color: "#aaa", fontSize: 14, marginTop: 8, textAlign: "center" }}>
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: "black",
+          padding: 24,
+          justifyContent: "center",
+          alignItems: "center",
+        }}
+      >
+        <Text style={{ color: "white", fontSize: 18, textAlign: "center" }}>
+          No questions to vote on
+        </Text>
+        <Text
+          style={{
+            color: "#aaa",
+            fontSize: 14,
+            marginTop: 8,
+            textAlign: "center",
+          }}
+        >
           Check back later or create your own!
         </Text>
       </View>
     );
   }
 
+  const wasVotedBeforeSession = initiallyVotedIdsRef.current.has(question.id);
+  const isResultsMode = wasVotedBeforeSession || question.isOwnQuestion;
+
   const currentVotes = question.votes ?? { left: 0, right: 0 };
   const currentTotal = currentVotes.left + currentVotes.right;
 
   const previewVotes = {
     left: swipeDirection === "left" ? currentVotes.left + 1 : currentVotes.left,
-    right: swipeDirection === "right" ? currentVotes.right + 1 : currentVotes.right,
+    right:
+      swipeDirection === "right" ? currentVotes.right + 1 : currentVotes.right,
   };
   const totalPreviewVotes = previewVotes.left + previewVotes.right;
 
-  const percentages = swipeProgress > 0 && swipeDirection
-    ? getNormalizedPercentages(previewVotes.left, previewVotes.right, totalPreviewVotes)
-    : getNormalizedPercentages(currentVotes.left, currentVotes.right, currentTotal);
+  const percentages = isResultsMode
+    ? getNormalizedPercentages(
+        currentVotes.left,
+        currentVotes.right,
+        currentTotal,
+      )
+    : swipeProgress > 0 && swipeDirection
+      ? getNormalizedPercentages(
+          previewVotes.left,
+          previewVotes.right,
+          totalPreviewVotes,
+        )
+      : getNormalizedPercentages(
+          currentVotes.left,
+          currentVotes.right,
+          currentTotal,
+        );
 
-  const leftVotes = swipeProgress > 0 && swipeDirection === "left" ? previewVotes.left : currentVotes.left;
-  const rightVotes = swipeProgress > 0 && swipeDirection === "right" ? previewVotes.right : currentVotes.right;
+  const leftVotes = isResultsMode
+    ? currentVotes.left
+    : swipeProgress > 0 && swipeDirection === "left"
+      ? previewVotes.left
+      : currentVotes.left;
+  const rightVotes = isResultsMode
+    ? currentVotes.right
+    : swipeProgress > 0 && swipeDirection === "right"
+      ? previewVotes.right
+      : currentVotes.right;
 
   return (
     <View style={{ flex: 1, backgroundColor: "black", padding: 24 }}>
@@ -413,11 +604,19 @@ export default function HomeScreen() {
         }}
       >
         {voteHistory.length > 0 ? (
-          <ActionButton onPress={() => actionsRef.current.undo()} icon="undo" label="Undo" />
+          <ActionButton
+            onPress={() => actionsRef.current.undo()}
+            icon='undo'
+            label='Undo'
+          />
         ) : (
           <View style={{ minWidth: 60 }} />
         )}
-        <ActionButton onPress={() => actionsRef.current.skip()} icon="arrow-right" label="Skip" />
+        <ActionButton
+          onPress={() => actionsRef.current.skip()}
+          icon='arrow-right'
+          label={isResultsMode ? "Next" : "Skip"}
+        />
       </View>
 
       <View style={{ flex: 1, justifyContent: "center" }}>
@@ -437,8 +636,20 @@ export default function HomeScreen() {
             { transform: [...cardStyle.transform, { scale: entryScale }] },
           ]}
         >
-          <View style={{ padding: 16, borderBottomWidth: 1, borderBottomColor: "#222" }}>
-            <View style={{ flexDirection: "row", alignItems: "center", flexWrap: "wrap" }}>
+          <View
+            style={{
+              padding: 16,
+              borderBottomWidth: 1,
+              borderBottomColor: "#222",
+            }}
+          >
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                flexWrap: "wrap",
+              }}
+            >
               <Text style={{ color: "#aaa", fontSize: 12 }}>
                 {question.meta?.category ?? "General"}
               </Text>
@@ -457,18 +668,33 @@ export default function HomeScreen() {
                       }}
                     >
                       {({ pressed }) => (
-                        <Text style={{ color: "#aaa", fontSize: 12, textDecorationLine: pressed ? "underline" : "none" }}>
+                        <Text
+                          style={{
+                            color: "#aaa",
+                            fontSize: 12,
+                            textDecorationLine: pressed ? "underline" : "none",
+                          }}
+                        >
                           {question.meta?.createdBy}
                         </Text>
                       )}
                     </Pressable>
                   ) : (
-                    <Text style={{ color: "#aaa", fontSize: 12 }}>{question.meta.createdBy}</Text>
+                    <Text style={{ color: "#aaa", fontSize: 12 }}>
+                      {question.meta.createdBy}
+                    </Text>
                   )}
                 </>
               )}
             </View>
-            <Text style={{ color: "white", fontSize: 20, fontWeight: "800", marginTop: 6 }}>
+            <Text
+              style={{
+                color: "white",
+                fontSize: 20,
+                fontWeight: "800",
+                marginTop: 6,
+              }}
+            >
               {question.title}
             </Text>
           </View>
@@ -478,7 +704,9 @@ export default function HomeScreen() {
             contentContainerStyle={{ padding: 16, gap: 12 }}
             nestedScrollEnabled
           >
-            <Text style={{ color: "white", fontSize: 16, lineHeight: 22 }}>{question.prompt}</Text>
+            <Text style={{ color: "white", fontSize: 16, lineHeight: 22 }}>
+              {question.prompt}
+            </Text>
             {question.promptImageUrl && (
               <Image
                 source={{ uri: question.promptImageUrl }}
@@ -487,29 +715,62 @@ export default function HomeScreen() {
             )}
           </ScrollView>
 
-          <View style={{ padding: 16, gap: 12, borderTopWidth: 1, borderTopColor: "#222" }}>
+          <View
+            style={{
+              padding: 16,
+              gap: 12,
+              borderTopWidth: 1,
+              borderTopColor: "#222",
+            }}
+          >
             <ChoiceOption
               choice={question.left}
-              direction="left"
+              direction='left'
               percentage={percentages.left}
               votes={leftVotes}
-              swipeProgress={swipeProgress}
-              swipeDirection={swipeDirection}
-              isSelected={swipeDirection === "left"}
-              highlight={swipeDirection === "left" ? swipeProgress : 0}
+              swipeProgress={isResultsMode ? 0 : swipeProgress}
+              swipeDirection={isResultsMode ? null : swipeDirection}
+              isSelected={
+                isResultsMode
+                  ? question.userVote === "left"
+                  : swipeDirection === "left"
+              }
+              highlight={
+                isResultsMode
+                  ? 0
+                  : swipeDirection === "left"
+                    ? swipeProgress
+                    : 0
+              }
+              resultsMode={isResultsMode}
             />
             <ChoiceOption
               choice={question.right}
-              direction="right"
+              direction='right'
               percentage={percentages.right}
               votes={rightVotes}
-              swipeProgress={swipeProgress}
-              swipeDirection={swipeDirection}
-              isSelected={swipeDirection === "right"}
-              highlight={swipeDirection === "right" ? swipeProgress : 0}
+              swipeProgress={isResultsMode ? 0 : swipeProgress}
+              swipeDirection={isResultsMode ? null : swipeDirection}
+              isSelected={
+                isResultsMode
+                  ? question.userVote === "right"
+                  : swipeDirection === "right"
+              }
+              highlight={
+                isResultsMode
+                  ? 0
+                  : swipeDirection === "right"
+                    ? swipeProgress
+                    : 0
+              }
+              resultsMode={isResultsMode}
             />
             <Text style={{ color: "#777", fontSize: 12 }}>
-              Tip: Scroll vertically in the prompt. Swipe left or right to pick.
+              {isResultsMode
+                ? question.isOwnQuestion
+                  ? "This is your question. Swipe to see the next one."
+                  : "You've already voted. Swipe to see the next one."
+                : "Tip: Scroll vertically in the prompt. Swipe left or right to pick."}
             </Text>
           </View>
         </Animated.View>

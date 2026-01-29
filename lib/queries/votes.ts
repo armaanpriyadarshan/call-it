@@ -114,3 +114,31 @@ export async function getUserVotedQuestionIds(
 
   return new Set((data || []).map((v) => v.question_id));
 }
+
+export async function getUserVotes(
+  supabase: SupabaseClient,
+  userId: string,
+  questionIds?: string[]
+): Promise<Map<string, 'left' | 'right'>> {
+  let query = supabase
+    .from('votes')
+    .select('question_id, choice')
+    .eq('user_id', userId);
+
+  if (questionIds && questionIds.length > 0) {
+    query = query.in('question_id', questionIds);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw error;
+  }
+
+  const votes = new Map<string, 'left' | 'right'>();
+  for (const row of data || []) {
+    votes.set(row.question_id, row.choice as 'left' | 'right');
+  }
+
+  return votes;
+}
