@@ -1,3 +1,4 @@
+import { SUGGESTED_CATEGORIES } from "@/constants/categories";
 import { useProfileTabReset } from "@/contexts/profile-tab-context";
 import {
     useRealtimeFollows,
@@ -58,19 +59,6 @@ import {
     TextInput,
     View,
 } from "react-native";
-
-const SUGGESTED_CATEGORIES = [
-  "Style",
-  "Food",
-  "Career",
-  "Social",
-  "Travel",
-  "Technology",
-  "Sports",
-  "Entertainment",
-  "Health",
-  "Education",
-];
 
 const COLORS = {
   background: "#1c1c1c",
@@ -3316,7 +3304,7 @@ export default function ProfileScreen() {
                           item={item}
                           question={question}
                           onPress={() => handleVoteHistoryPress(item)}
-                          onDelete={() => handleDeleteVote(item.questionId)}
+                          onDelete={() => item.questionId && handleDeleteVote(item.questionId)}
                         />
                       );
                     })

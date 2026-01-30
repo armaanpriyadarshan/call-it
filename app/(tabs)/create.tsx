@@ -18,6 +18,7 @@ import {
   View,
 } from "react-native";
 
+import { SUGGESTED_CATEGORIES } from "@/constants/categories";
 import { createQuestion } from "@/lib/queries/questions";
 import { uploadQuestionImage } from "@/lib/storage";
 import { createClerkSupabaseClient } from "@/lib/supabase";
@@ -27,19 +28,6 @@ type ImageInfo = {
   width?: number;
   height?: number;
 };
-
-const SUGGESTED_CATEGORIES = [
-  "Style",
-  "Food",
-  "Career",
-  "Social",
-  "Travel",
-  "Technology",
-  "Sports",
-  "Entertainment",
-  "Health",
-  "Education",
-];
 
 const COLORS = {
   background: "#1c1c1c",

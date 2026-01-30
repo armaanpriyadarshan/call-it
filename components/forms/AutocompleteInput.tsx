@@ -1,6 +1,6 @@
 import * as Haptics from "expo-haptics";
 import React from "react";
-import { Animated, ScrollView, Text, TextInput, TouchableOpacity, View } from "react-native";
+import { Animated, Pressable, ScrollView, Text, TextInput, View } from "react-native";
 
 const COLORS = {
   background: "#1c1c1c",
@@ -144,7 +144,7 @@ export const AutocompleteInput: React.FC<{
             showsVerticalScrollIndicator={true}
           >
             {filteredSuggestions.map((suggestion, index) => (
-              <TouchableOpacity
+              <Pressable
                 key={index}
                 onPressIn={cancelBlurTimeout}
                 onPress={() => handleSelect(suggestion)}
@@ -156,7 +156,7 @@ export const AutocompleteInput: React.FC<{
                 })}
               >
                 <Text style={{ color: COLORS.text, fontSize: 16 }}>{suggestion}</Text>
-              </TouchableOpacity>
+              </Pressable>
             ))}
           </ScrollView>
         </View>

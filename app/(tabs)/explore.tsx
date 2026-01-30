@@ -5,7 +5,6 @@ import {
   SearchBar,
   SearchFilterTab,
 } from "@/components/search";
-import { UserSearchCard } from "@/components/users";
 import { ActionButton, ChoiceOption } from "@/components/voting";
 import { useExploreTabReset } from "@/contexts/explore-tab-context";
 import {
@@ -21,7 +20,7 @@ import {
   getVoteCounts,
 } from "@/lib/queries/votes";
 import { createClerkSupabaseClient } from "@/lib/supabase";
-import type { Question, User, VoteHistoryItem } from "@/types";
+import type { Question, VoteHistoryItem } from "@/types";
 import { calculateVoteData } from "@/utils/voting";
 import { useAuth, useUser } from "@clerk/clerk-expo";
 import Octicons from "@expo/vector-icons/Octicons";
@@ -42,8 +41,6 @@ import {
   TextInput,
   View,
 } from "react-native";
-
-type SearchFilter = "all" | "users" | "questions";
 
 function mapDbQuestionToQuestion(
   dbQuestion: DbQuestion,
@@ -113,8 +110,6 @@ export default function ExploreScreen() {
   >(null);
   const [voteHistory, setVoteHistory] = React.useState<VoteHistoryItem[]>([]);
   const [cardOpacity, setCardOpacity] = React.useState(1);
-  const [searchFilter, setSearchFilter] = React.useState<SearchFilter>("all");
-  const [users] = React.useState<User[]>([]);
 
   const position = React.useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const entryScale = React.useRef(new Animated.Value(1)).current;
@@ -697,36 +692,28 @@ export default function ExploreScreen() {
   );
 
   const autocompleteSuggestions = React.useMemo(() => {
-    if (!searchQuery.trim() || searchQuery.length < 1)
-      return { questions: [] as string[], users: [] as User[] };
+    if (!searchQuery.trim() || searchQuery.length < 1) return [];
 
     const query = searchQuery.toLowerCase();
-    const questionSuggestions = new Set<string>();
+    const suggestions = new Set<string>();
 
     questions.forEach((q) => {
       if (q.title.toLowerCase().includes(query)) {
-        questionSuggestions.add(q.title);
+        suggestions.add(q.title);
       }
       if (q.meta?.category?.toLowerCase().includes(query)) {
-        questionSuggestions.add(q.meta.category);
+        suggestions.add(q.meta.category);
       }
       if (q.left.label.toLowerCase().includes(query)) {
-        questionSuggestions.add(q.left.label);
+        suggestions.add(q.left.label);
       }
       if (q.right.label.toLowerCase().includes(query)) {
-        questionSuggestions.add(q.right.label);
+        suggestions.add(q.right.label);
       }
     });
 
-    const userSuggestions = users
-      .filter((u) => u.username.toLowerCase().includes(query))
-      .slice(0, 3);
-
-    return {
-      questions: Array.from(questionSuggestions).slice(0, 5),
-      users: userSuggestions,
-    };
-  }, [searchQuery, questions, users]);
+    return Array.from(suggestions).slice(0, 8);
+  }, [searchQuery, questions]);
 
   const filteredQuestions = React.useMemo(() => {
     if (!performedSearch.trim()) return [];
@@ -742,18 +729,10 @@ export default function ExploreScreen() {
     );
   }, [performedSearch, questions]);
 
-  const filteredUsers = React.useMemo(() => {
-    if (!performedSearch.trim()) return [];
-
-    const query = performedSearch.toLowerCase();
-    return users.filter((u) => u.username.toLowerCase().includes(query));
-  }, [performedSearch, users]);
-
   const handleSearchSubmit = React.useCallback(() => {
     if (searchQuery.trim()) {
       const trimmed = searchQuery.trim();
       setPerformedSearch(trimmed);
-      setSearchFilter("all");
       if (!recentSearches.includes(trimmed)) {
         addToRecentSearches(trimmed);
       }
@@ -785,7 +764,6 @@ export default function ExploreScreen() {
     setSearchQuery("");
     setPerformedSearch("");
     setSearchFocused(true);
-    setSearchFilter("all");
   }, [clearBlurTimeout]);
 
   const handleSearchTextChange = React.useCallback(
@@ -1299,131 +1277,28 @@ export default function ExploreScreen() {
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps='handled'
             >
-              {autocompleteSuggestions.users.length > 0 && (
-                <>
-                  <View
-                    style={{
-                      paddingVertical: 12,
-                      paddingHorizontal: 16,
-                      borderBottomWidth: 1,
-                      borderBottomColor: "#222",
-                    }}
-                  >
-                    <Text
-                      style={{ color: "#aaa", fontSize: 14, fontWeight: "600" }}
-                    >
-                      Users
-                    </Text>
-                  </View>
-                  {autocompleteSuggestions.users.map((user) => (
-                    <Pressable
-                      key={user.id}
-                      onPress={() => {
-                        clearBlurTimeout();
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        router.push({
-                          pathname: "/user-profile",
-                          params: { username: user.username, userId: user.id },
-                        });
-                      }}
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        paddingVertical: 12,
-                        paddingHorizontal: 16,
-                        borderBottomWidth: 1,
-                        borderBottomColor: "#222",
-                      }}
-                    >
-                      <View
-                        style={{
-                          width: 32,
-                          height: 32,
-                          borderRadius: 16,
-                          backgroundColor: user.avatarUrl
-                            ? "transparent"
-                            : "#333",
-                          marginRight: 12,
-                          overflow: "hidden",
-                        }}
-                      >
-                        {user.avatarUrl ? (
-                          <Image
-                            source={{ uri: user.avatarUrl }}
-                            style={{ width: 32, height: 32 }}
-                          />
-                        ) : (
-                          <View
-                            style={{
-                              width: 32,
-                              height: 32,
-                              backgroundColor: "#333",
-                              alignItems: "center",
-                              justifyContent: "center",
-                            }}
-                          >
-                            <Text
-                              style={{
-                                color: "#aaa",
-                                fontSize: 14,
-                                fontWeight: "600",
-                              }}
-                            >
-                              {user.username[0].toUpperCase()}
-                            </Text>
-                          </View>
-                        )}
-                      </View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={{ color: "white", fontSize: 16 }}>
-                          {user.username}
-                        </Text>
-                      </View>
-                      <Octicons name='chevron-right' size={16} color='#666' />
-                    </Pressable>
-                  ))}
-                </>
+              {autocompleteSuggestions.length > 0 ? (
+                autocompleteSuggestions.map((item, idx) => (
+                  <AutocompleteItem
+                    key={`${item}-${idx}`}
+                    suggestion={item}
+                    onPress={() => handleAutocompletePress(item)}
+                  />
+                ))
+              ) : (
+                <View
+                  style={{
+                    flex: 1,
+                    justifyContent: "center",
+                    alignItems: "center",
+                    padding: 24,
+                  }}
+                >
+                  <Text style={{ color: "#666", fontSize: 14 }}>
+                    No suggestions found
+                  </Text>
+                </View>
               )}
-              {autocompleteSuggestions.questions.length > 0 && (
-                <>
-                  <View
-                    style={{
-                      paddingVertical: 12,
-                      paddingHorizontal: 16,
-                      borderBottomWidth: 1,
-                      borderBottomColor: "#222",
-                    }}
-                  >
-                    <Text
-                      style={{ color: "#aaa", fontSize: 14, fontWeight: "600" }}
-                    >
-                      Questions
-                    </Text>
-                  </View>
-                  {autocompleteSuggestions.questions.map((item, idx) => (
-                    <AutocompleteItem
-                      key={`${item}-${idx}`}
-                      suggestion={item}
-                      onPress={() => handleAutocompletePress(item)}
-                    />
-                  ))}
-                </>
-              )}
-              {autocompleteSuggestions.users.length === 0 &&
-                autocompleteSuggestions.questions.length === 0 && (
-                  <View
-                    style={{
-                      flex: 1,
-                      justifyContent: "center",
-                      alignItems: "center",
-                      padding: 24,
-                    }}
-                  >
-                    <Text style={{ color: "#666", fontSize: 14 }}>
-                      No suggestions found
-                    </Text>
-                  </View>
-                )}
             </ScrollView>
           )}
         </View>
@@ -1466,21 +1341,9 @@ export default function ExploreScreen() {
             }}
           >
             <SearchFilterTab
-              label='All'
-              isActive={searchFilter === "all"}
-              onPress={() => setSearchFilter("all")}
-              count={filteredUsers.length + filteredQuestions.length}
-            />
-            <SearchFilterTab
-              label='Users'
-              isActive={searchFilter === "users"}
-              onPress={() => setSearchFilter("users")}
-              count={filteredUsers.length}
-            />
-            <SearchFilterTab
               label='Questions'
-              isActive={searchFilter === "questions"}
-              onPress={() => setSearchFilter("questions")}
+              isActive={true}
+              onPress={() => {}}
               count={filteredQuestions.length}
             />
           </View>
@@ -1489,66 +1352,15 @@ export default function ExploreScreen() {
             contentContainerStyle={{ padding: 16 }}
             showsVerticalScrollIndicator={false}
           >
-            {(searchFilter === "all" || searchFilter === "users") &&
-              filteredUsers.length > 0 && (
-                <>
-                  {searchFilter === "all" && (
-                    <Text
-                      style={{
-                        color: "#aaa",
-                        fontSize: 14,
-                        fontWeight: "600",
-                        marginBottom: 12,
-                      }}
-                    >
-                      Users
-                    </Text>
-                  )}
-                  {filteredUsers.map((user) => (
-                    <UserSearchCard
-                      key={user.id}
-                      user={user}
-                      onPress={() => {
-                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                        router.push({
-                          pathname: "/user-profile",
-                          params: { username: user.username, userId: user.id },
-                        });
-                      }}
-                    />
-                  ))}
-                  {searchFilter === "all" && filteredQuestions.length > 0 && (
-                    <View style={{ height: 16 }} />
-                  )}
-                </>
-              )}
-
-            {(searchFilter === "all" || searchFilter === "questions") &&
-              filteredQuestions.length > 0 && (
-                <>
-                  {searchFilter === "all" && (
-                    <Text
-                      style={{
-                        color: "#aaa",
-                        fontSize: 14,
-                        fontWeight: "600",
-                        marginBottom: 12,
-                      }}
-                    >
-                      Questions
-                    </Text>
-                  )}
-                  {filteredQuestions.map((question) => (
-                    <QuestionCard
-                      key={question.id}
-                      question={question}
-                      onPress={() => handleCardPress(question)}
-                    />
-                  ))}
-                </>
-              )}
-
-            {filteredUsers.length === 0 && filteredQuestions.length === 0 && (
+            {filteredQuestions.length > 0 ? (
+              filteredQuestions.map((question) => (
+                <QuestionCard
+                  key={question.id}
+                  question={question}
+                  onPress={() => handleCardPress(question)}
+                />
+              ))
+            ) : (
               <View
                 style={{
                   flex: 1,
@@ -1559,36 +1371,6 @@ export default function ExploreScreen() {
               >
                 <Text style={{ color: "#666", fontSize: 14 }}>
                   No results found for {'"' + performedSearch + '"'}
-                </Text>
-              </View>
-            )}
-
-            {searchFilter === "users" && filteredUsers.length === 0 && (
-              <View
-                style={{
-                  flex: 1,
-                  justifyContent: "center",
-                  alignItems: "center",
-                  padding: 24,
-                }}
-              >
-                <Text style={{ color: "#666", fontSize: 14 }}>
-                  No users found for {'"' + performedSearch + '"'}
-                </Text>
-              </View>
-            )}
-
-            {searchFilter === "questions" && filteredQuestions.length === 0 && (
-              <View
-                style={{
-                  flex: 1,
-                  justifyContent: "center",
-                  alignItems: "center",
-                  padding: 24,
-                }}
-              >
-                <Text style={{ color: "#666", fontSize: 14 }}>
-                  No questions found for {'"' + performedSearch + '"'}
                 </Text>
               </View>
             )}
