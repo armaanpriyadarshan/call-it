@@ -127,6 +127,7 @@ export type AutocompleteSuggestion = {
   id: string;
   label: string;
   sublabel?: string;
+  avatarUrl?: string;
 };
 
 export async function autocompleteSearch(
@@ -147,7 +148,7 @@ export async function autocompleteSearch(
       .limit(questionsLimit),
     supabase
       .from("profiles")
-      .select("user_id, username, first_name, last_name")
+      .select("user_id, username, first_name, last_name, avatar_url")
       .or(
         `username.ilike.${pattern},first_name.ilike.${pattern},last_name.ilike.${pattern}`
       )
@@ -157,24 +158,26 @@ export async function autocompleteSearch(
 
   const suggestions: AutocompleteSuggestion[] = [];
 
+  if (profilesResult.data) {
+    for (const p of profilesResult.data) {
+      const displayName = p.username || [p.first_name, p.last_name].filter(Boolean).join(" ") || "User";
+      const fullName = [p.first_name, p.last_name].filter(Boolean).join(" ");
+      suggestions.push({
+        type: "user",
+        id: p.user_id,
+        label: displayName,
+        sublabel: p.username && fullName ? fullName : undefined,
+        avatarUrl: p.avatar_url || undefined,
+      });
+    }
+  }
+
   if (questionsResult.data) {
     for (const q of questionsResult.data) {
       suggestions.push({
         type: "question",
         id: q.id,
         label: q.title,
-      });
-    }
-  }
-
-  if (profilesResult.data) {
-    for (const p of profilesResult.data) {
-      const fullName = [p.first_name, p.last_name].filter(Boolean).join(" ");
-      suggestions.push({
-        type: "user",
-        id: p.user_id,
-        label: p.username || "Unknown",
-        sublabel: fullName || undefined,
       });
     }
   }

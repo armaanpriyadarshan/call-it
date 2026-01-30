@@ -1,13 +1,7 @@
+import { AutocompleteSuggestion } from "@/lib/queries/search";
 import Octicons from "@expo/vector-icons/Octicons";
 import React from "react";
-import { Pressable, Text, View } from "react-native";
-
-export type AutocompleteSuggestion = {
-  type: "question" | "user";
-  id: string;
-  label: string;
-  sublabel?: string;
-};
+import { Image, Pressable, Text, View } from "react-native";
 
 export const AutocompleteItem: React.FC<{
   suggestion: AutocompleteSuggestion;
@@ -24,12 +18,38 @@ export const AutocompleteItem: React.FC<{
       borderBottomColor: "#222",
     }}
   >
-    <Octicons
-      name={suggestion.type === "user" ? "person" : "search"}
-      size={18}
-      color="#666"
-      style={{ marginRight: 12 }}
-    />
+    {suggestion.type === "user" ? (
+      <View
+        style={{
+          width: 40,
+          height: 40,
+          borderRadius: 20,
+          backgroundColor: suggestion.avatarUrl ? "transparent" : "#333",
+          marginRight: 12,
+          overflow: "hidden",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        {suggestion.avatarUrl ? (
+          <Image
+            source={{ uri: suggestion.avatarUrl }}
+            style={{ width: 40, height: 40 }}
+          />
+        ) : (
+          <Text style={{ color: "#aaa", fontSize: 16, fontWeight: "600" }}>
+            {suggestion.label[0]?.toUpperCase() || "?"}
+          </Text>
+        )}
+      </View>
+    ) : (
+      <Octicons
+        name="search"
+        size={18}
+        color="#666"
+        style={{ marginRight: 12 }}
+      />
+    )}
     <View style={{ flex: 1 }}>
       <Text style={{ color: "white", fontSize: 16 }}>{suggestion.label}</Text>
       {suggestion.type === "user" && suggestion.sublabel && (
@@ -38,5 +58,8 @@ export const AutocompleteItem: React.FC<{
         </Text>
       )}
     </View>
+    {suggestion.type === "user" && (
+      <Octicons name="chevron-right" size={16} color="#666" />
+    )}
   </Pressable>
 );
