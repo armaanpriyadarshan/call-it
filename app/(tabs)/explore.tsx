@@ -9,6 +9,7 @@ import { ActionButton, ChoiceOption } from "@/components/voting";
 import { useExploreTabReset } from "@/contexts/explore-tab-context";
 import {
   useRealtimeQuestions,
+  useRealtimeUserVotes,
   useRealtimeVoteCounts,
 } from "@/lib/hooks/useRealtime";
 import { getProfile } from "@/lib/queries/profiles";
@@ -269,6 +270,79 @@ export default function ExploreScreen() {
   }, [questions]);
 
   useRealtimeVoteCounts(supabase, questionIds, refreshVoteCounts);
+
+  // Handle votes cast/removed from other screens (profile, home)
+  const handleExternalVoteCast = React.useCallback(
+    async (voteData: any) => {
+      const questionId = voteData.question_id;
+      const choice = voteData.choice as "left" | "right";
+
+      // Skip if this is a pending undo (local action)
+      if (pendingUndoIdsRef.current.has(questionId)) return;
+
+      // Update the question's vote state
+      setQuestions((prev) => {
+        const idx = prev.findIndex((q) => q.id === questionId);
+        if (idx === -1) return prev;
+
+        const updated = [...prev];
+        const q = updated[idx];
+        // Only update if not already marked as voted
+        if (!q.hasVoted) {
+          updated[idx] = {
+            ...q,
+            hasVoted: true,
+            userVote: choice,
+          };
+        }
+        return updated;
+      });
+    },
+    [],
+  );
+
+  const handleExternalVoteRemoved = React.useCallback(
+    async (voteData: any) => {
+      const questionId = voteData.question_id;
+
+      // Skip if this is a pending undo (local action)
+      if (pendingUndoIdsRef.current.has(questionId)) {
+        pendingUndoIdsRef.current.delete(questionId);
+        return;
+      }
+
+      // Update the question's vote state
+      setQuestions((prev) => {
+        const idx = prev.findIndex((q) => q.id === questionId);
+        if (idx === -1) return prev;
+
+        const updated = [...prev];
+        const q = updated[idx];
+        updated[idx] = {
+          ...q,
+          hasVoted: false,
+          userVote: undefined,
+        };
+        return updated;
+      });
+
+      // Remove from initially voted set since the vote no longer exists
+      initiallyVotedIdsRef.current.delete(questionId);
+
+      // Also remove from vote history if present
+      setVoteHistory((prev) =>
+        prev.filter((v) => v.questionId !== questionId),
+      );
+    },
+    [],
+  );
+
+  useRealtimeUserVotes(
+    supabase,
+    user?.id ?? null,
+    handleExternalVoteCast,
+    handleExternalVoteRemoved,
+  );
 
   const handleQuestionInsert = React.useCallback(
     async (dbQuestion: any) => {

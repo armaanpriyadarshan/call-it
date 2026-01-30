@@ -99,6 +99,7 @@ export default function HomeScreen() {
   const userRef = React.useRef(user);
   const getTokenRef = React.useRef(getToken);
   const initiallyVotedIdsRef = React.useRef<Set<string>>(new Set());
+  const localVoteIdsRef = React.useRef<Set<string>>(new Set());
 
   questionsRef.current = questions;
   displayIndexRef.current = displayIndex;
@@ -235,35 +236,42 @@ export default function HomeScreen() {
     return questions.map((q) => q.id);
   }, [questions]);
 
+  // Re-enabled - was not the cause of skipping
   useRealtimeVoteCounts(supabase, questionIds, refreshVoteCounts);
 
-  // Remove questions that were voted on in other tabs
+
+  // Remove questions that were voted on in other tabs (runs on tab focus)
   const syncAndRemoveVotedQuestions = React.useCallback(async () => {
     const currentUser = userRef.current;
-    if (!currentUser || questions.length === 0) return;
+    const currentQuestions = questionsRef.current;
+    if (!currentUser || currentQuestions.length === 0) return;
 
     const supabase = getSupabase();
-    const ids = questions.map((q) => q.id);
+    const ids = currentQuestions.map((q) => q.id);
     const userVotesMap = await getUserVotes(supabase, currentUser.id, ids);
 
     const votedIds = new Set(userVotesMap.keys());
-    const hasVotedQuestions = ids.some((id) => votedIds.has(id));
+    // Only consider external votes (not local ones we're tracking)
+    const externalVotedIds = new Set(
+      [...votedIds].filter((id) => !localVoteIdsRef.current.has(id))
+    );
 
-    if (hasVotedQuestions) {
-      setQuestions((prev) => {
-        const filtered = prev.filter((q) => !votedIds.has(q.id));
-        return filtered;
-      });
-      // Reset display index if needed
-      setDisplayIndex((prev) => {
-        const newQuestions = questions.filter((q) => !votedIds.has(q.id));
-        if (prev >= newQuestions.length) {
-          return Math.max(0, newQuestions.length - 1);
-        }
-        return prev;
-      });
-    }
-  }, [questions]);
+    if (externalVotedIds.size === 0) return;
+
+    setQuestions((prev) => {
+      const filtered = prev.filter((q) => !externalVotedIds.has(q.id));
+      return filtered;
+    });
+
+    // Reset display index if needed
+    setDisplayIndex((prev) => {
+      const newLength = currentQuestions.length - externalVotedIds.size;
+      if (prev >= newLength) {
+        return Math.max(0, newLength - 1);
+      }
+      return prev;
+    });
+  }, []);
 
   useFocusEffect(
     React.useCallback(() => {
@@ -289,6 +297,9 @@ export default function HomeScreen() {
     if (!currentUser || !currentQuestion) return;
 
     if (currentQuestion.hasVoted || currentQuestion.isOwnQuestion) return;
+
+    // Track this as a local vote so realtime handler doesn't remove it
+    localVoteIdsRef.current.add(currentQuestion.id);
 
     setQuestions((prev) => {
       const updated = [...prev];
@@ -369,6 +380,14 @@ export default function HomeScreen() {
 
     const currentQuestions = questionsRef.current;
     const currentIndex = displayIndexRef.current;
+
+    // Don't advance if there are no questions or only one question
+    if (currentQuestions.length <= 1) {
+      setSwipeProgress(0);
+      setSwipeDirection(null);
+      return;
+    }
+
     const nextIdx =
       currentIndex + 1 >= currentQuestions.length ? 0 : currentIndex + 1;
 
@@ -413,23 +432,35 @@ export default function HomeScreen() {
   actionsRef.current.undo = () => {
     const currentUser = userRef.current;
     const history = voteHistoryRef.current;
+    const currentQuestions = questionsRef.current;
 
     if (history.length === 0 || !currentUser) return;
 
     const lastVote = history[history.length - 1];
-    const previousIndex = lastVote.questionIndex!;
+    const questionId = lastVote.questionId;
 
-    const wasVotedBeforeSession: boolean = Boolean(
-      lastVote.questionId &&
-      initiallyVotedIdsRef.current.has(lastVote.questionId),
-    );
+    if (!questionId) return;
+
+    // Find the question by ID (index may have changed if array was modified)
+    const actualIndex = currentQuestions.findIndex((q) => q.id === questionId);
+    if (actualIndex === -1) {
+      // Question was removed from array, can't undo
+      console.warn("Cannot undo: question no longer in list");
+      setVoteHistory((prev) => prev.slice(0, -1));
+      return;
+    }
+
+    // Remove from local vote tracking
+    localVoteIdsRef.current.delete(questionId);
+
+    const wasVotedBeforeSession = initiallyVotedIdsRef.current.has(questionId);
 
     setQuestions((prev) => {
       const updated = [...prev];
-      const q = updated[previousIndex];
-      if (q && lastVote.questionId) {
+      const q = updated[actualIndex];
+      if (q) {
         const votes = q.votes ?? { left: 0, right: 0 };
-        updated[previousIndex] = {
+        updated[actualIndex] = {
           ...q,
           votes: {
             ...votes,
@@ -442,8 +473,7 @@ export default function HomeScreen() {
       return updated;
     });
 
-    const questionId = lastVote.questionId;
-    if (questionId && !wasVotedBeforeSession) {
+    if (!wasVotedBeforeSession) {
       const supabase = getSupabase();
       deleteVote(supabase, questionId, currentUser.id)
         .then(() => {
@@ -455,19 +485,12 @@ export default function HomeScreen() {
     }
 
     setVoteHistory((prev) => prev.slice(0, -1));
-    setDisplayIndex(previousIndex);
+    setDisplayIndex(actualIndex);
     position.setValue({ x: 0, y: 0 });
     setSwipeProgress(0);
     setSwipeDirection(null);
     setCardOpacity(1);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-
-    if (lastVote.questionId) {
-      const supabase = getSupabase();
-      deleteVote(supabase, lastVote.questionId, currentUser.id).catch((err) => {
-        console.error("Failed to delete vote:", err);
-      });
-    }
   };
 
   const panResponder = React.useMemo(

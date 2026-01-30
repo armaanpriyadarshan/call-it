@@ -8,12 +8,15 @@ export function useRealtimeQuestions(
   onDelete: (questionId: string) => void,
 ) {
   const channelRef = useRef<RealtimeChannel | null>(null);
+  const channelIdRef = useRef<string>(
+    `questions-${Math.random().toString(36).slice(2, 9)}`,
+  );
 
   useEffect(() => {
     if (!supabase) return;
 
     const channel = supabase
-      .channel("questions-changes")
+      .channel(channelIdRef.current)
       .on(
         "postgres_changes",
         {
@@ -65,12 +68,15 @@ export function useRealtimeVotes(
   onVoteChange: (questionId: string) => void,
 ) {
   const channelRef = useRef<RealtimeChannel | null>(null);
+  const channelIdRef = useRef<string>(
+    `votes-${Math.random().toString(36).slice(2, 9)}`,
+  );
 
   useEffect(() => {
     if (!supabase || questionIds.length === 0) return;
 
     const channel = supabase
-      .channel("votes-changes")
+      .channel(channelIdRef.current)
       .on(
         "postgres_changes",
         {
@@ -105,12 +111,15 @@ export function useRealtimeVoteCounts(
   onCountsChange: (questionId: string) => void,
 ) {
   const channelRef = useRef<RealtimeChannel | null>(null);
+  const channelIdRef = useRef<string>(
+    `vote-counts-${Math.random().toString(36).slice(2, 9)}`,
+  );
 
   useEffect(() => {
     if (!supabase || questionIds.length === 0) return;
 
     const channel = supabase
-      .channel("votes-changes")
+      .channel(channelIdRef.current)
       .on(
         "postgres_changes",
         {
@@ -145,12 +154,15 @@ export function useRealtimeUserQuestionVotes(
   onVoteReceived: (questionId: string, voteData: any) => void,
 ) {
   const channelRef = useRef<RealtimeChannel | null>(null);
+  const channelIdRef = useRef<string>(
+    `user-question-votes-${Math.random().toString(36).slice(2, 9)}`,
+  );
 
   useEffect(() => {
     if (!supabase || userQuestionIds.length === 0) return;
 
     const channel = supabase
-      .channel("user-question-votes")
+      .channel(channelIdRef.current)
       .on(
         "postgres_changes",
         {
