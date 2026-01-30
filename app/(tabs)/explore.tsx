@@ -1632,13 +1632,81 @@ export default function ExploreScreen() {
                   <ActivityIndicator size='small' color='white' />
                 </View>
               ) : autocompleteSuggestions.length > 0 ? (
-                autocompleteSuggestions.map((item) => (
-                  <AutocompleteItem
-                    key={`${item.type}-${item.id}`}
-                    suggestion={item}
-                    onPress={() => handleAutocompletePress(item)}
-                  />
-                ))
+                <>
+                  {autocompleteSuggestions.some((s) => s.type === "user") && (
+                    <>
+                      <View
+                        style={{
+                          paddingVertical: 10,
+                          paddingHorizontal: 16,
+                          backgroundColor: "#0f0f0f",
+                        }}
+                      >
+                        <Text
+                          style={{
+                            color: "#888",
+                            fontSize: 12,
+                            fontWeight: "600",
+                            textTransform: "uppercase",
+                            letterSpacing: 0.5,
+                          }}
+                        >
+                          Users
+                        </Text>
+                      </View>
+                      {autocompleteSuggestions
+                        .filter((s) => s.type === "user")
+                        .map((item) => (
+                          <AutocompleteItem
+                            key={`${item.type}-${item.id}`}
+                            suggestion={item}
+                            onPress={() => handleAutocompletePress(item)}
+                          />
+                        ))}
+                    </>
+                  )}
+                  {autocompleteSuggestions.some(
+                    (s) => s.type === "question",
+                  ) && (
+                    <>
+                      <View
+                        style={{
+                          paddingVertical: 10,
+                          paddingHorizontal: 16,
+                          backgroundColor: "#0f0f0f",
+                          borderTopWidth:
+                            autocompleteSuggestions.some(
+                              (s) => s.type === "user",
+                            )
+                              ? 1
+                              : 0,
+                          borderTopColor: "#333",
+                        }}
+                      >
+                        <Text
+                          style={{
+                            color: "#888",
+                            fontSize: 12,
+                            fontWeight: "600",
+                            textTransform: "uppercase",
+                            letterSpacing: 0.5,
+                          }}
+                        >
+                          Suggestions
+                        </Text>
+                      </View>
+                      {autocompleteSuggestions
+                        .filter((s) => s.type === "question")
+                        .map((item) => (
+                          <AutocompleteItem
+                            key={`${item.type}-${item.id}`}
+                            suggestion={item}
+                            onPress={() => handleAutocompletePress(item)}
+                          />
+                        ))}
+                    </>
+                  )}
+                </>
               ) : (
                 <View
                   style={{
