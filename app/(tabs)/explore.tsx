@@ -7,6 +7,7 @@ import {
 } from "@/components/search";
 import { UserListItem } from "@/components/users";
 import { ActionButton, ChoiceOption } from "@/components/voting";
+import { SUGGESTED_CATEGORIES } from "@/constants/categories";
 import { useExploreTabReset } from "@/contexts/explore-tab-context";
 import {
   useRealtimeQuestions,
@@ -95,6 +96,9 @@ const SWIPE_OUT_DISTANCE = 1.2 * SCREEN_W;
 const HORIZONTAL_ACTIVATION_DX = 8;
 const LEFT_EDGE_THRESHOLD = 50;
 const MAX_RECENT_SEARCHES = 10;
+const SEARCH_BAR_HEIGHT = 112; // paddingTop 60 + paddingBottom 12 + search bar ~40
+const CATEGORIES_HEIGHT = 60;
+const HEADER_HEIGHT = SEARCH_BAR_HEIGHT + CATEGORIES_HEIGHT;
 
 export default function ExploreScreen() {
   const router = useRouter();
@@ -134,6 +138,7 @@ export default function ExploreScreen() {
   const [loading, setLoading] = React.useState(true);
   const [refreshing, setRefreshing] = React.useState(false);
   const [viewMode, setViewMode] = React.useState<"list" | "card">("list");
+  const [selectedCategory, setSelectedCategory] = React.useState<string | null>(null);
   const [displayIndex, setDisplayIndex] = React.useState(0);
   const question = questions[displayIndex] ?? null;
   const [swipeProgress, setSwipeProgress] = React.useState(0);
@@ -151,6 +156,10 @@ export default function ExploreScreen() {
   const entryScale = React.useRef(new Animated.Value(1)).current;
   const chevronWidth = React.useRef(new Animated.Value(0)).current;
   const chevronOpacity = React.useRef(new Animated.Value(0)).current;
+  const scrollY = React.useRef(new Animated.Value(0)).current;
+  const lastScrollY = React.useRef(0);
+  const scrollDirection = React.useRef<'up' | 'down'>('up');
+  const headerOffset = React.useRef(0);
   const blurTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -193,7 +202,10 @@ export default function ExploreScreen() {
       try {
         const supabase = getSupabase();
         const currentUser = userRef.current;
-        const dbQuestions = await getQuestions(supabase, { limit: 100 });
+        const dbQuestions = await getQuestions(supabase, {
+          limit: 100,
+          category: selectedCategory ?? undefined,
+        });
 
         if (dbQuestions.length === 0) {
           setQuestions([]);
@@ -249,7 +261,7 @@ export default function ExploreScreen() {
         setRefreshing(false);
       }
     },
-    [getSupabase],
+    [getSupabase, selectedCategory],
   );
 
   const mapProfileToUser = React.useCallback((profile: Profile): User => {
@@ -461,6 +473,18 @@ export default function ExploreScreen() {
     hasFetchedRef.current = true;
     fetchQuestions();
   }, [user, fetchQuestions]);
+
+  React.useEffect(() => {
+    if (user && hasFetchedRef.current) {
+      // Reset header position when switching categories
+      headerOffset.current = 0;
+      lastScrollY.current = 0;
+      scrollY.setValue(0);
+      setLoading(true);
+      fetchQuestions();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedCategory]);
 
   const supabase = React.useMemo(() => {
     if (!user) return null;
@@ -712,8 +736,50 @@ export default function ExploreScreen() {
   );
 
   const handleRefresh = React.useCallback(() => {
+    // Reset header position when refreshing
+    headerOffset.current = 0;
+    lastScrollY.current = 0;
+    scrollY.setValue(0);
     fetchQuestions(true);
-  }, [fetchQuestions]);
+  }, [fetchQuestions, scrollY]);
+
+  const handleScroll = React.useCallback(
+    (event: { nativeEvent: { contentOffset: { y: number } } }) => {
+      const currentY = event.nativeEvent.contentOffset.y;
+      const diff = currentY - lastScrollY.current;
+      lastScrollY.current = currentY;
+
+      // Determine scroll direction
+      if (diff > 0) {
+        scrollDirection.current = 'down';
+      } else if (diff < 0) {
+        scrollDirection.current = 'up';
+      }
+
+      // Calculate new header offset based on scroll
+      if (scrollDirection.current === 'down') {
+        // Scrolling down - increase offset (hide header)
+        headerOffset.current = Math.min(
+          headerOffset.current + diff,
+          HEADER_HEIGHT
+        );
+      } else {
+        // Scrolling up - decrease offset (show header)
+        headerOffset.current = Math.max(
+          headerOffset.current + diff,
+          0
+        );
+      }
+
+      // Ensure we're fully visible at top
+      if (currentY <= 0) {
+        headerOffset.current = 0;
+      }
+
+      scrollY.setValue(headerOffset.current);
+    },
+    [scrollY],
+  );
 
   const clearBlurTimeout = React.useCallback(() => {
     if (blurTimeoutRef.current) {
@@ -1728,30 +1794,156 @@ export default function ExploreScreen() {
     );
   }
 
+  // Interpolate scroll position for separate header sections
+  // Categories collapse first (0 to CATEGORIES_HEIGHT), then search bar (CATEGORIES_HEIGHT to HEADER_HEIGHT)
+  // Categories must also move when search bar moves, so total movement is -CATEGORIES_HEIGHT + -SEARCH_BAR_HEIGHT
+  const categoriesTranslateY = performedSearch ? 0 : scrollY.interpolate({
+    inputRange: [0, CATEGORIES_HEIGHT, HEADER_HEIGHT],
+    outputRange: [0, -CATEGORIES_HEIGHT, -CATEGORIES_HEIGHT - SEARCH_BAR_HEIGHT],
+    extrapolate: 'clamp',
+  });
+
+  const searchBarTranslateY = performedSearch ? 0 : scrollY.interpolate({
+    inputRange: [CATEGORIES_HEIGHT, HEADER_HEIGHT],
+    outputRange: [0, -SEARCH_BAR_HEIGHT],
+    extrapolate: 'clamp',
+  });
+
+  // Show search bar border when categories have collapsed
+  const searchBarBorderOpacity = performedSearch ? 1 : scrollY.interpolate({
+    inputRange: [CATEGORIES_HEIGHT - 10, CATEGORIES_HEIGHT],
+    outputRange: [0, 1],
+    extrapolate: 'clamp',
+  });
+
   return (
     <View style={{ flex: 1, backgroundColor: "black" }}>
-      <View
+      {/* Animated Search Bar */}
+      <Animated.View
         style={{
-          paddingTop: 60,
-          paddingBottom: 12,
-          paddingHorizontal: 16,
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          zIndex: 11,
           backgroundColor: "black",
-          borderBottomWidth: 1,
-          borderBottomColor: "#333",
+          transform: [{ translateY: searchBarTranslateY }],
         }}
       >
-        <SearchBar
-          value={searchQuery}
-          onChangeText={handleSearchTextChange}
-          onClear={handleSearchClear}
-          onFocus={handleSearchFocus}
-          onBlur={handleSearchBlur}
-          onSubmitEditing={handleSearchSubmit}
+        <View
+          style={{
+            paddingTop: 60,
+            paddingBottom: 12,
+            paddingHorizontal: 16,
+          }}
+        >
+          <SearchBar
+            value={searchQuery}
+            onChangeText={handleSearchTextChange}
+            onClear={handleSearchClear}
+            onFocus={handleSearchFocus}
+            onBlur={handleSearchBlur}
+            onSubmitEditing={handleSearchSubmit}
+          />
+        </View>
+        {/* Animated border that appears when categories collapse */}
+        <Animated.View
+          style={{
+            position: "absolute",
+            bottom: 0,
+            left: 0,
+            right: 0,
+            height: 1,
+            backgroundColor: "#333",
+            opacity: searchBarBorderOpacity,
+          }}
         />
-      </View>
+      </Animated.View>
+
+      {/* Animated Categories Row */}
+      {!performedSearch && (
+        <Animated.View
+          style={{
+            position: "absolute",
+            top: SEARCH_BAR_HEIGHT,
+            left: 0,
+            right: 0,
+            zIndex: 10,
+            backgroundColor: "black",
+            transform: [{ translateY: categoriesTranslateY }],
+          }}
+        >
+          <View
+            style={{
+              height: 60,
+              borderBottomWidth: 1,
+              borderBottomColor: "#222",
+              flexDirection: "row",
+              alignItems: "center",
+            }}
+          >
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={{
+                paddingHorizontal: 16,
+                gap: 8,
+              }}
+            >
+              <Pressable
+                onPress={() => setSelectedCategory(null)}
+                style={{
+                  height: 36,
+                  paddingHorizontal: 16,
+                  borderRadius: 18,
+                  borderWidth: 1,
+                  backgroundColor: selectedCategory === null ? "white" : "transparent",
+                  borderColor: selectedCategory === null ? "white" : "#333",
+                  justifyContent: "center",
+                }}
+              >
+                <Text
+                  style={{
+                    color: selectedCategory === null ? "black" : "#aaa",
+                    fontSize: 14,
+                    fontWeight: "500",
+                  }}
+                >
+                  All
+                </Text>
+              </Pressable>
+              {SUGGESTED_CATEGORIES.map((category) => (
+                <Pressable
+                  key={category}
+                  onPress={() => setSelectedCategory(category)}
+                  style={{
+                    height: 36,
+                    paddingHorizontal: 16,
+                    borderRadius: 18,
+                    borderWidth: 1,
+                    backgroundColor: selectedCategory === category ? "white" : "transparent",
+                    borderColor: selectedCategory === category ? "white" : "#333",
+                    justifyContent: "center",
+                  }}
+                >
+                  <Text
+                    style={{
+                      color: selectedCategory === category ? "black" : "#aaa",
+                      fontSize: 14,
+                      fontWeight: "500",
+                    }}
+                  >
+                    {category}
+                  </Text>
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        </Animated.View>
+      )}
 
       {performedSearch ? (
-        <>
+        <View style={{ flex: 1, paddingTop: SEARCH_BAR_HEIGHT }}>
           <View
             style={{
               flexDirection: "row",
@@ -1999,10 +2191,10 @@ export default function ExploreScreen() {
               )}
             </ScrollView>
           )}
-        </>
+        </View>
       ) : loading ? (
         <View
-          style={{ flex: 1, justifyContent: "center", alignItems: "center" }}
+          style={{ flex: 1, justifyContent: "center", alignItems: "center", paddingTop: HEADER_HEIGHT }}
         >
           <ActivityIndicator size='large' color='white' />
         </View>
@@ -2013,6 +2205,7 @@ export default function ExploreScreen() {
             justifyContent: "center",
             alignItems: "center",
             padding: 24,
+            paddingTop: HEADER_HEIGHT,
           }}
         >
           <Text style={{ color: "white", fontSize: 18, textAlign: "center" }}>
@@ -2039,14 +2232,17 @@ export default function ExploreScreen() {
               onPress={() => handleCardPress(item)}
             />
           )}
-          contentContainerStyle={{ padding: 16 }}
+          contentContainerStyle={{ padding: 16, paddingTop: HEADER_HEIGHT + 16 }}
           showsVerticalScrollIndicator={false}
+          onScroll={handleScroll}
+          scrollEventThrottle={16}
           refreshControl={
             <RefreshControl
               refreshing={refreshing}
               onRefresh={handleRefresh}
               tintColor='#fff'
               colors={["#fff"]}
+              progressViewOffset={HEADER_HEIGHT}
             />
           }
         />
