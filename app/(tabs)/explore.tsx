@@ -5,6 +5,7 @@ import {
   SearchBar,
   SearchFilterTab,
 } from "@/components/search";
+import { UserListItem } from "@/components/users";
 import { ActionButton, ChoiceOption } from "@/components/voting";
 import { useExploreTabReset } from "@/contexts/explore-tab-context";
 import {
@@ -12,8 +13,15 @@ import {
   useRealtimeUserVotes,
   useRealtimeVoteCounts,
 } from "@/lib/hooks/useRealtime";
-import { getProfile } from "@/lib/queries/profiles";
+import { getProfile, Profile } from "@/lib/queries/profiles";
 import { Question as DbQuestion, getQuestions } from "@/lib/queries/questions";
+import {
+  autocompleteSearch,
+  AutocompleteSuggestion,
+  searchAll,
+  searchQuestions,
+  searchProfiles,
+} from "@/lib/queries/search";
 import {
   createVote,
   deleteVote,
@@ -21,7 +29,7 @@ import {
   getVoteCounts,
 } from "@/lib/queries/votes";
 import { createClerkSupabaseClient } from "@/lib/supabase";
-import type { Question, VoteHistoryItem } from "@/types";
+import type { Question, User, VoteHistoryItem } from "@/types";
 import { calculateVoteData } from "@/utils/voting";
 import { useAuth, useUser } from "@clerk/clerk-expo";
 import Octicons from "@expo/vector-icons/Octicons";
@@ -99,6 +107,29 @@ export default function ExploreScreen() {
   const [searchFocused, setSearchFocused] = React.useState(false);
   const [performedSearch, setPerformedSearch] = React.useState("");
   const [recentSearches, setRecentSearches] = React.useState<string[]>([]);
+  const [activeSearchTab, setActiveSearchTab] = React.useState<
+    "all" | "questions" | "users"
+  >("all");
+  const [searchResults, setSearchResults] = React.useState<{
+    questions: Question[];
+    users: User[];
+    questionsTotal: number;
+    usersTotal: number;
+    questionsHasMore: boolean;
+    usersHasMore: boolean;
+  }>({
+    questions: [],
+    users: [],
+    questionsTotal: 0,
+    usersTotal: 0,
+    questionsHasMore: false,
+    usersHasMore: false,
+  });
+  const [searchLoading, setSearchLoading] = React.useState(false);
+  const [loadingMoreQuestions, setLoadingMoreQuestions] = React.useState(false);
+  const [loadingMoreUsers, setLoadingMoreUsers] = React.useState(false);
+  const [questionsOffset, setQuestionsOffset] = React.useState(0);
+  const [usersOffset, setUsersOffset] = React.useState(0);
   const [questions, setQuestions] = React.useState<Question[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [refreshing, setRefreshing] = React.useState(false);
@@ -111,6 +142,10 @@ export default function ExploreScreen() {
   >(null);
   const [voteHistory, setVoteHistory] = React.useState<VoteHistoryItem[]>([]);
   const [cardOpacity, setCardOpacity] = React.useState(1);
+  const [autocompleteSuggestions, setAutocompleteSuggestions] = React.useState<
+    AutocompleteSuggestion[]
+  >([]);
+  const [autocompleteLoading, setAutocompleteLoading] = React.useState(false);
 
   const position = React.useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const entryScale = React.useRef(new Animated.Value(1)).current;
@@ -119,6 +154,7 @@ export default function ExploreScreen() {
   const blurTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
+  const debounceRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
   const focusedSearchInputRef = React.useRef<TextInput>(null);
   const hasFetchedRef = React.useRef(false);
   const supabaseRef = React.useRef<ReturnType<
@@ -215,6 +251,210 @@ export default function ExploreScreen() {
     },
     [getSupabase],
   );
+
+  const mapProfileToUser = React.useCallback((profile: Profile): User => {
+    return {
+      id: profile.user_id,
+      username: profile.username || "",
+      firstName: profile.first_name || undefined,
+      lastName: profile.last_name || undefined,
+      avatarUrl: profile.avatar_url || undefined,
+    };
+  }, []);
+
+  const performSearch = React.useCallback(
+    async (query: string) => {
+      if (!query.trim()) return;
+
+      setSearchLoading(true);
+      setQuestionsOffset(0);
+      setUsersOffset(0);
+
+      try {
+        const supabase = getSupabase();
+        const currentUser = userRef.current;
+        const results = await searchAll(supabase, query, {
+          questionsLimit: 20,
+          profilesLimit: 10,
+        });
+
+        // Map question results with vote counts and creator profiles
+        const dbQuestions = results.questions.questions;
+        if (dbQuestions.length > 0) {
+          const questionIds = dbQuestions.map((q) => q.id);
+          const [voteCounts, userVotesMap] = await Promise.all([
+            getVoteCounts(supabase, questionIds),
+            currentUser
+              ? getUserVotes(supabase, currentUser.id, questionIds)
+              : Promise.resolve(new Map<string, "left" | "right">()),
+          ]);
+
+          const creatorIds = [...new Set(dbQuestions.map((q) => q.user_id))];
+          const profiles = await Promise.all(
+            creatorIds.map((id) => getProfile(supabase, id).catch(() => null)),
+          );
+          const profileMap = new Map<string, string | null>();
+          creatorIds.forEach((id, i) => {
+            const profile = profiles[i];
+            let displayName: string | null = null;
+            if (profile?.username) {
+              displayName = profile.username.toLowerCase();
+            } else if (profile?.first_name) {
+              displayName = profile.first_name.toLowerCase();
+            }
+            profileMap.set(id, displayName);
+          });
+
+          const mappedQuestions = dbQuestions.map((dbQ) => {
+            const votes = voteCounts.get(dbQ.id) ?? { left: 0, right: 0 };
+            const displayName = profileMap.get(dbQ.user_id) ?? null;
+            const userVote = userVotesMap.get(dbQ.id);
+            return mapDbQuestionToQuestion(
+              dbQ,
+              votes,
+              displayName,
+              dbQ.is_anonymous,
+              currentUser?.id ?? null,
+              userVote,
+            );
+          });
+
+          const mappedUsers = results.profiles.profiles.map(mapProfileToUser);
+
+          setSearchResults({
+            questions: mappedQuestions,
+            users: mappedUsers,
+            questionsTotal: results.questions.total,
+            usersTotal: results.profiles.total,
+            questionsHasMore: results.questions.hasMore,
+            usersHasMore: results.profiles.hasMore,
+          });
+        } else {
+          const mappedUsers = results.profiles.profiles.map(mapProfileToUser);
+          setSearchResults({
+            questions: [],
+            users: mappedUsers,
+            questionsTotal: 0,
+            usersTotal: results.profiles.total,
+            questionsHasMore: false,
+            usersHasMore: results.profiles.hasMore,
+          });
+        }
+      } catch (err) {
+        console.error("Failed to perform search:", err);
+        setSearchResults({
+          questions: [],
+          users: [],
+          questionsTotal: 0,
+          usersTotal: 0,
+          questionsHasMore: false,
+          usersHasMore: false,
+        });
+      } finally {
+        setSearchLoading(false);
+      }
+    },
+    [getSupabase, mapProfileToUser],
+  );
+
+  const loadMoreQuestions = React.useCallback(async () => {
+    if (!performedSearch.trim() || loadingMoreQuestions || !searchResults.questionsHasMore)
+      return;
+
+    setLoadingMoreQuestions(true);
+    const newOffset = questionsOffset + 20;
+
+    try {
+      const supabase = getSupabase();
+      const currentUser = userRef.current;
+      const results = await searchQuestions(supabase, performedSearch, {
+        limit: 20,
+        offset: newOffset,
+      });
+
+      if (results.questions.length > 0) {
+        const questionIds = results.questions.map((q) => q.id);
+        const [voteCounts, userVotesMap] = await Promise.all([
+          getVoteCounts(supabase, questionIds),
+          currentUser
+            ? getUserVotes(supabase, currentUser.id, questionIds)
+            : Promise.resolve(new Map<string, "left" | "right">()),
+        ]);
+
+        const creatorIds = [...new Set(results.questions.map((q) => q.user_id))];
+        const profiles = await Promise.all(
+          creatorIds.map((id) => getProfile(supabase, id).catch(() => null)),
+        );
+        const profileMap = new Map<string, string | null>();
+        creatorIds.forEach((id, i) => {
+          const profile = profiles[i];
+          let displayName: string | null = null;
+          if (profile?.username) {
+            displayName = profile.username.toLowerCase();
+          } else if (profile?.first_name) {
+            displayName = profile.first_name.toLowerCase();
+          }
+          profileMap.set(id, displayName);
+        });
+
+        const mappedQuestions = results.questions.map((dbQ) => {
+          const votes = voteCounts.get(dbQ.id) ?? { left: 0, right: 0 };
+          const displayName = profileMap.get(dbQ.user_id) ?? null;
+          const userVote = userVotesMap.get(dbQ.id);
+          return mapDbQuestionToQuestion(
+            dbQ,
+            votes,
+            displayName,
+            dbQ.is_anonymous,
+            currentUser?.id ?? null,
+            userVote,
+          );
+        });
+
+        setSearchResults((prev) => ({
+          ...prev,
+          questions: [...prev.questions, ...mappedQuestions],
+          questionsHasMore: results.hasMore,
+        }));
+        setQuestionsOffset(newOffset);
+      }
+    } catch (err) {
+      console.error("Failed to load more questions:", err);
+    } finally {
+      setLoadingMoreQuestions(false);
+    }
+  }, [performedSearch, loadingMoreQuestions, searchResults.questionsHasMore, questionsOffset, getSupabase]);
+
+  const loadMoreUsers = React.useCallback(async () => {
+    if (!performedSearch.trim() || loadingMoreUsers || !searchResults.usersHasMore)
+      return;
+
+    setLoadingMoreUsers(true);
+    const newOffset = usersOffset + 10;
+
+    try {
+      const supabase = getSupabase();
+      const results = await searchProfiles(supabase, performedSearch, {
+        limit: 10,
+        offset: newOffset,
+      });
+
+      if (results.profiles.length > 0) {
+        const mappedUsers = results.profiles.map(mapProfileToUser);
+
+        setSearchResults((prev) => ({
+          ...prev,
+          users: [...prev.users, ...mappedUsers],
+          usersHasMore: results.hasMore,
+        }));
+        setUsersOffset(newOffset);
+      }
+    } catch (err) {
+      console.error("Failed to load more users:", err);
+    } finally {
+      setLoadingMoreUsers(false);
+    }
+  }, [performedSearch, loadingMoreUsers, searchResults.usersHasMore, usersOffset, getSupabase, mapProfileToUser]);
 
   React.useEffect(() => {
     if (!user || hasFetchedRef.current) return;
@@ -765,54 +1005,48 @@ export default function ExploreScreen() {
     [position, handleBackToList],
   );
 
-  const autocompleteSuggestions = React.useMemo(() => {
-    if (!searchQuery.trim() || searchQuery.length < 1) return [];
+  React.useEffect(() => {
+    if (searchQuery.length < 2) {
+      setAutocompleteSuggestions([]);
+      return;
+    }
 
-    const query = searchQuery.toLowerCase();
-    const suggestions = new Set<string>();
+    if (debounceRef.current) clearTimeout(debounceRef.current);
 
-    questions.forEach((q) => {
-      if (q.title.toLowerCase().includes(query)) {
-        suggestions.add(q.title);
+    debounceRef.current = setTimeout(async () => {
+      setAutocompleteLoading(true);
+      try {
+        const supabase = getSupabase();
+        const results = await autocompleteSearch(supabase, searchQuery, {
+          questionsLimit: 5,
+          profilesLimit: 3,
+        });
+        setAutocompleteSuggestions(results);
+      } catch (err) {
+        console.error("Autocomplete search failed:", err);
+        setAutocompleteSuggestions([]);
+      } finally {
+        setAutocompleteLoading(false);
       }
-      if (q.meta?.category?.toLowerCase().includes(query)) {
-        suggestions.add(q.meta.category);
-      }
-      if (q.left.label.toLowerCase().includes(query)) {
-        suggestions.add(q.left.label);
-      }
-      if (q.right.label.toLowerCase().includes(query)) {
-        suggestions.add(q.right.label);
-      }
-    });
+    }, 300);
 
-    return Array.from(suggestions).slice(0, 8);
-  }, [searchQuery, questions]);
-
-  const filteredQuestions = React.useMemo(() => {
-    if (!performedSearch.trim()) return [];
-
-    const query = performedSearch.toLowerCase();
-    return questions.filter(
-      (q) =>
-        q.title.toLowerCase().includes(query) ||
-        q.prompt.toLowerCase().includes(query) ||
-        q.meta?.category?.toLowerCase().includes(query) ||
-        q.left.label.toLowerCase().includes(query) ||
-        q.right.label.toLowerCase().includes(query),
-    );
-  }, [performedSearch, questions]);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [searchQuery, getSupabase]);
 
   const handleSearchSubmit = React.useCallback(() => {
     if (searchQuery.trim()) {
       const trimmed = searchQuery.trim();
       setPerformedSearch(trimmed);
+      setActiveSearchTab("all");
+      performSearch(trimmed);
       if (!recentSearches.includes(trimmed)) {
         addToRecentSearches(trimmed);
       }
       setSearchFocused(false);
     }
-  }, [searchQuery, recentSearches, addToRecentSearches]);
+  }, [searchQuery, recentSearches, addToRecentSearches, performSearch]);
 
   const handleSearchClose = React.useCallback(() => {
     clearBlurTimeout();
@@ -838,6 +1072,15 @@ export default function ExploreScreen() {
     setSearchQuery("");
     setPerformedSearch("");
     setSearchFocused(true);
+    setSearchResults({
+      questions: [],
+      users: [],
+      questionsTotal: 0,
+      usersTotal: 0,
+      questionsHasMore: false,
+      usersHasMore: false,
+    });
+    setActiveSearchTab("all");
   }, [clearBlurTimeout]);
 
   const handleSearchTextChange = React.useCallback(
@@ -889,10 +1132,12 @@ export default function ExploreScreen() {
       clearBlurTimeout();
       setSearchQuery(trimmed);
       setPerformedSearch(trimmed);
+      setActiveSearchTab("all");
+      performSearch(trimmed);
       addToRecentSearches(trimmed);
       setSearchFocused(false);
     },
-    [clearBlurTimeout, addToRecentSearches],
+    [clearBlurTimeout, addToRecentSearches, performSearch],
   );
 
   const handleRecentSearchDelete = React.useCallback(
@@ -905,17 +1150,32 @@ export default function ExploreScreen() {
   );
 
   const handleAutocompletePress = React.useCallback(
-    (suggestion: string) => {
-      const trimmed = suggestion.trim();
-      if (!trimmed) return;
-
+    (suggestion: AutocompleteSuggestion) => {
       clearBlurTimeout();
-      setSearchQuery(trimmed);
-      setPerformedSearch(trimmed);
-      addToRecentSearches(trimmed);
-      setSearchFocused(false);
+
+      if (suggestion.type === "user") {
+        setSearchFocused(false);
+        setSearchQuery("");
+        router.push({
+          pathname: "/user-profile",
+          params: {
+            username: suggestion.label,
+            userId: suggestion.id,
+          },
+        });
+      } else {
+        const trimmed = suggestion.label.trim();
+        if (!trimmed) return;
+
+        setSearchQuery(trimmed);
+        setPerformedSearch(trimmed);
+        setActiveSearchTab("all");
+        performSearch(trimmed);
+        addToRecentSearches(trimmed);
+        setSearchFocused(false);
+      }
     },
-    [clearBlurTimeout, addToRecentSearches],
+    [clearBlurTimeout, addToRecentSearches, performSearch, router],
   );
 
   React.useEffect(() => {
@@ -996,6 +1256,15 @@ export default function ExploreScreen() {
       setSearchQuery("");
       setPerformedSearch("");
       setSearchFocused(false);
+      setSearchResults({
+        questions: [],
+        users: [],
+        questionsTotal: 0,
+        usersTotal: 0,
+        questionsHasMore: false,
+        usersHasMore: false,
+      });
+      setActiveSearchTab("all");
       chevronWidth.setValue(0);
       chevronOpacity.setValue(0);
       return true;
@@ -1351,10 +1620,21 @@ export default function ExploreScreen() {
               showsVerticalScrollIndicator={false}
               keyboardShouldPersistTaps='handled'
             >
-              {autocompleteSuggestions.length > 0 ? (
-                autocompleteSuggestions.map((item, idx) => (
+              {autocompleteLoading ? (
+                <View
+                  style={{
+                    flex: 1,
+                    justifyContent: "center",
+                    alignItems: "center",
+                    padding: 24,
+                  }}
+                >
+                  <ActivityIndicator size='small' color='white' />
+                </View>
+              ) : autocompleteSuggestions.length > 0 ? (
+                autocompleteSuggestions.map((item) => (
                   <AutocompleteItem
-                    key={`${item}-${idx}`}
+                    key={`${item.type}-${item.id}`}
                     suggestion={item}
                     onPress={() => handleAutocompletePress(item)}
                   />
@@ -1415,40 +1695,242 @@ export default function ExploreScreen() {
             }}
           >
             <SearchFilterTab
+              label='All'
+              isActive={activeSearchTab === "all"}
+              onPress={() => setActiveSearchTab("all")}
+              count={searchResults.questionsTotal + searchResults.usersTotal}
+            />
+            <SearchFilterTab
               label='Questions'
-              isActive={true}
-              onPress={() => {}}
-              count={filteredQuestions.length}
+              isActive={activeSearchTab === "questions"}
+              onPress={() => setActiveSearchTab("questions")}
+              count={searchResults.questionsTotal}
+            />
+            <SearchFilterTab
+              label='Users'
+              isActive={activeSearchTab === "users"}
+              onPress={() => setActiveSearchTab("users")}
+              count={searchResults.usersTotal}
             />
           </View>
 
-          <ScrollView
-            contentContainerStyle={{ padding: 16 }}
-            showsVerticalScrollIndicator={false}
-          >
-            {filteredQuestions.length > 0 ? (
-              filteredQuestions.map((question) => (
-                <QuestionCard
-                  key={question.id}
-                  question={question}
-                  onPress={() => handleCardPress(question)}
-                />
-              ))
-            ) : (
-              <View
-                style={{
-                  flex: 1,
-                  justifyContent: "center",
-                  alignItems: "center",
-                  padding: 24,
-                }}
-              >
-                <Text style={{ color: "#666", fontSize: 14 }}>
-                  No results found for {'"' + performedSearch + '"'}
-                </Text>
-              </View>
-            )}
-          </ScrollView>
+          {searchLoading ? (
+            <View
+              style={{ flex: 1, justifyContent: "center", alignItems: "center" }}
+            >
+              <ActivityIndicator size='large' color='white' />
+            </View>
+          ) : searchResults.questions.length === 0 && searchResults.users.length === 0 ? (
+            <View
+              style={{
+                flex: 1,
+                justifyContent: "center",
+                alignItems: "center",
+                padding: 24,
+              }}
+            >
+              <Text style={{ color: "#666", fontSize: 14 }}>
+                No results found for {'"' + performedSearch + '"'}
+              </Text>
+            </View>
+          ) : (
+            <ScrollView
+              contentContainerStyle={{ paddingBottom: 24 }}
+              showsVerticalScrollIndicator={false}
+            >
+              {/* All tab - show both questions and users */}
+              {activeSearchTab === "all" && (
+                <>
+                  {searchResults.questions.length > 0 && (
+                    <View>
+                      <Text
+                        style={{
+                          color: "#aaa",
+                          fontSize: 14,
+                          fontWeight: "600",
+                          paddingHorizontal: 16,
+                          paddingTop: 16,
+                          paddingBottom: 8,
+                        }}
+                      >
+                        Questions
+                      </Text>
+                      <View style={{ paddingHorizontal: 16 }}>
+                        {searchResults.questions.map((question) => (
+                          <QuestionCard
+                            key={question.id}
+                            question={question}
+                            onPress={() => handleCardPress(question)}
+                          />
+                        ))}
+                      </View>
+                      {searchResults.questionsHasMore && (
+                        <Pressable
+                          onPress={loadMoreQuestions}
+                          disabled={loadingMoreQuestions}
+                          style={({ pressed }) => ({
+                            marginHorizontal: 16,
+                            marginTop: 8,
+                            paddingVertical: 12,
+                            borderRadius: 8,
+                            backgroundColor: pressed ? "#222" : "#1a1a1a",
+                            alignItems: "center",
+                          })}
+                        >
+                          {loadingMoreQuestions ? (
+                            <ActivityIndicator size='small' color='white' />
+                          ) : (
+                            <Text style={{ color: "white", fontSize: 14 }}>
+                              Load more questions
+                            </Text>
+                          )}
+                        </Pressable>
+                      )}
+                    </View>
+                  )}
+
+                  {searchResults.users.length > 0 && (
+                    <View>
+                      <Text
+                        style={{
+                          color: "#aaa",
+                          fontSize: 14,
+                          fontWeight: "600",
+                          paddingHorizontal: 16,
+                          paddingTop: 16,
+                          paddingBottom: 8,
+                        }}
+                      >
+                        Users
+                      </Text>
+                      {searchResults.users.map((user) => (
+                        <UserListItem key={user.id} user={user} />
+                      ))}
+                      {searchResults.usersHasMore && (
+                        <Pressable
+                          onPress={loadMoreUsers}
+                          disabled={loadingMoreUsers}
+                          style={({ pressed }) => ({
+                            marginHorizontal: 16,
+                            marginTop: 8,
+                            paddingVertical: 12,
+                            borderRadius: 8,
+                            backgroundColor: pressed ? "#222" : "#1a1a1a",
+                            alignItems: "center",
+                          })}
+                        >
+                          {loadingMoreUsers ? (
+                            <ActivityIndicator size='small' color='white' />
+                          ) : (
+                            <Text style={{ color: "white", fontSize: 14 }}>
+                              Load more users
+                            </Text>
+                          )}
+                        </Pressable>
+                      )}
+                    </View>
+                  )}
+                </>
+              )}
+
+              {/* Questions tab */}
+              {activeSearchTab === "questions" && (
+                <View style={{ paddingHorizontal: 16, paddingTop: 16 }}>
+                  {searchResults.questions.length > 0 ? (
+                    <>
+                      {searchResults.questions.map((question) => (
+                        <QuestionCard
+                          key={question.id}
+                          question={question}
+                          onPress={() => handleCardPress(question)}
+                        />
+                      ))}
+                      {searchResults.questionsHasMore && (
+                        <Pressable
+                          onPress={loadMoreQuestions}
+                          disabled={loadingMoreQuestions}
+                          style={({ pressed }) => ({
+                            marginTop: 8,
+                            paddingVertical: 12,
+                            borderRadius: 8,
+                            backgroundColor: pressed ? "#222" : "#1a1a1a",
+                            alignItems: "center",
+                          })}
+                        >
+                          {loadingMoreQuestions ? (
+                            <ActivityIndicator size='small' color='white' />
+                          ) : (
+                            <Text style={{ color: "white", fontSize: 14 }}>
+                              Load more questions
+                            </Text>
+                          )}
+                        </Pressable>
+                      )}
+                    </>
+                  ) : (
+                    <View
+                      style={{
+                        justifyContent: "center",
+                        alignItems: "center",
+                        padding: 24,
+                      }}
+                    >
+                      <Text style={{ color: "#666", fontSize: 14 }}>
+                        No questions found
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              )}
+
+              {/* Users tab */}
+              {activeSearchTab === "users" && (
+                <View style={{ paddingTop: 8 }}>
+                  {searchResults.users.length > 0 ? (
+                    <>
+                      {searchResults.users.map((user) => (
+                        <UserListItem key={user.id} user={user} />
+                      ))}
+                      {searchResults.usersHasMore && (
+                        <Pressable
+                          onPress={loadMoreUsers}
+                          disabled={loadingMoreUsers}
+                          style={({ pressed }) => ({
+                            marginHorizontal: 16,
+                            marginTop: 8,
+                            paddingVertical: 12,
+                            borderRadius: 8,
+                            backgroundColor: pressed ? "#222" : "#1a1a1a",
+                            alignItems: "center",
+                          })}
+                        >
+                          {loadingMoreUsers ? (
+                            <ActivityIndicator size='small' color='white' />
+                          ) : (
+                            <Text style={{ color: "white", fontSize: 14 }}>
+                              Load more users
+                            </Text>
+                          )}
+                        </Pressable>
+                      )}
+                    </>
+                  ) : (
+                    <View
+                      style={{
+                        justifyContent: "center",
+                        alignItems: "center",
+                        padding: 24,
+                      }}
+                    >
+                      <Text style={{ color: "#666", fontSize: 14 }}>
+                        No users found
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              )}
+            </ScrollView>
+          )}
         </>
       ) : loading ? (
         <View
