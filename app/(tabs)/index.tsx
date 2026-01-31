@@ -12,6 +12,8 @@ import { createClerkSupabaseClient } from "@/lib/supabase";
 import type { Question, VoteHistoryItem } from "@/types";
 import { getNormalizedPercentages } from "@/utils/voting";
 import { useAuth, useUser } from "@clerk/clerk-expo";
+import Octicons from "@expo/vector-icons/Octicons";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import * as Haptics from "expo-haptics";
 import { useFocusEffect, useRouter } from "expo-router";
 import React from "react";
@@ -70,11 +72,19 @@ function mapDbQuestionToQuestion(
   };
 }
 
+const FEED_TABS = [
+  { id: "foryou", icon: "star-fill" as const },
+  { id: "trending", icon: "flame" as const },
+  { id: "friends", icon: "people" as const },
+];
+
 export default function HomeScreen() {
   const router = useRouter();
   const { getToken } = useAuth();
   const { user } = useUser();
+  const insets = useSafeAreaInsets();
 
+  const [selectedTab, setSelectedTab] = React.useState(0);
   const [questions, setQuestions] = React.useState<Question[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [displayIndex, setDisplayIndex] = React.useState(0);
@@ -564,43 +574,104 @@ export default function HomeScreen() {
 
   if (loading) {
     return (
-      <View
-        style={{
-          flex: 1,
-          backgroundColor: "black",
-          justifyContent: "center",
-          alignItems: "center",
-        }}
-      >
-        <ActivityIndicator size='large' color='white' />
+      <View style={{ flex: 1, backgroundColor: "black", paddingHorizontal: 24 }}>
+        <View
+          style={{
+            flexDirection: "row",
+            justifyContent: "center",
+            alignItems: "center",
+            gap: 32,
+            paddingTop: insets.top + 8,
+            paddingBottom: 8,
+            marginBottom: 8,
+          }}
+        >
+          {FEED_TABS.map((tab, index) => (
+            <Pressable
+              key={tab.id}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setSelectedTab(index);
+              }}
+              style={{
+                padding: 8,
+              }}
+            >
+              <Octicons
+                name={tab.icon}
+                size={24}
+                color={selectedTab === index ? "white" : "#555"}
+              />
+            </Pressable>
+          ))}
+        </View>
+        <View
+          style={{
+            flex: 1,
+            justifyContent: "center",
+            alignItems: "center",
+          }}
+        >
+          <ActivityIndicator size='large' color='white' />
+        </View>
       </View>
     );
   }
 
   if (!question || questions.length === 0) {
     return (
-      <View
-        style={{
-          flex: 1,
-          backgroundColor: "black",
-          padding: 24,
-          justifyContent: "center",
-          alignItems: "center",
-        }}
-      >
-        <Text style={{ color: "white", fontSize: 18, textAlign: "center" }}>
-          No questions to vote on
-        </Text>
-        <Text
+      <View style={{ flex: 1, backgroundColor: "black", paddingHorizontal: 24 }}>
+        <View
           style={{
-            color: "#aaa",
-            fontSize: 14,
-            marginTop: 8,
-            textAlign: "center",
+            flexDirection: "row",
+            justifyContent: "center",
+            alignItems: "center",
+            gap: 32,
+            paddingTop: insets.top + 8,
+            paddingBottom: 8,
+            marginBottom: 8,
           }}
         >
-          Check back later or create your own!
-        </Text>
+          {FEED_TABS.map((tab, index) => (
+            <Pressable
+              key={tab.id}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                setSelectedTab(index);
+              }}
+              style={{
+                padding: 8,
+              }}
+            >
+              <Octicons
+                name={tab.icon}
+                size={24}
+                color={selectedTab === index ? "white" : "#555"}
+              />
+            </Pressable>
+          ))}
+        </View>
+        <View
+          style={{
+            flex: 1,
+            justifyContent: "center",
+            alignItems: "center",
+          }}
+        >
+          <Text style={{ color: "white", fontSize: 18, textAlign: "center" }}>
+            No questions to vote on
+          </Text>
+          <Text
+            style={{
+              color: "#aaa",
+              fontSize: 14,
+              marginTop: 8,
+              textAlign: "center",
+            }}
+          >
+            Check back later or create your own!
+          </Text>
+        </View>
       </View>
     );
   }
@@ -648,7 +719,38 @@ export default function HomeScreen() {
       : currentVotes.right;
 
   return (
-    <View style={{ flex: 1, backgroundColor: "black", padding: 24 }}>
+    <View style={{ flex: 1, backgroundColor: "black", paddingHorizontal: 24 }}>
+      <View
+        style={{
+          flexDirection: "row",
+          justifyContent: "center",
+          alignItems: "center",
+          gap: 32,
+          paddingTop: insets.top + 8,
+          paddingBottom: 8,
+          marginBottom: 8,
+        }}
+      >
+        {FEED_TABS.map((tab, index) => (
+          <Pressable
+            key={tab.id}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+              setSelectedTab(index);
+            }}
+            style={{
+              padding: 8,
+            }}
+          >
+            <Octicons
+              name={tab.icon}
+              size={24}
+              color={selectedTab === index ? "white" : "#555"}
+            />
+          </Pressable>
+        ))}
+      </View>
+
       <View
         style={{
           position: "absolute",
