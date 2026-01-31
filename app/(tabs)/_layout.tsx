@@ -9,6 +9,10 @@ import {
     useExploreTabReset,
 } from "@/contexts/explore-tab-context";
 import {
+    HomeTabProvider,
+    useHomeTabReset,
+} from "@/contexts/home-tab-context";
+import {
     ProfileTabProvider,
     useProfileTabReset,
 } from "@/contexts/profile-tab-context";
@@ -17,6 +21,8 @@ import { useEnsureProfile } from "@/hooks/use-ensure-profile";
 
 function TabLayoutContent() {
   const colorScheme = useColorScheme();
+  const { triggerReset: triggerHomeReset, setHomeTabActive } =
+    useHomeTabReset();
   const { triggerReset: triggerExploreReset, setExploreTabActive } =
     useExploreTabReset();
   const {
@@ -45,8 +51,17 @@ function TabLayoutContent() {
         }}
         listeners={{
           focus: () => {
+            setHomeTabActive(true);
             setExploreTabActive(false);
             setProfileTabActive(false);
+          },
+          blur: () => {
+            setHomeTabActive(false);
+          },
+          tabPress: (e) => {
+            if (triggerHomeReset()) {
+              e.preventDefault();
+            }
           },
         }}
       />
@@ -118,10 +133,12 @@ function TabLayoutContent() {
 
 export default function TabLayout() {
   return (
-    <ExploreTabProvider>
-      <ProfileTabProvider>
-        <TabLayoutContent />
-      </ProfileTabProvider>
-    </ExploreTabProvider>
+    <HomeTabProvider>
+      <ExploreTabProvider>
+        <ProfileTabProvider>
+          <TabLayoutContent />
+        </ProfileTabProvider>
+      </ExploreTabProvider>
+    </HomeTabProvider>
   );
 }

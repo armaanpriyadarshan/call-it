@@ -259,3 +259,23 @@ export async function getTotalVotesOnUserQuestions(
 
   return count || 0;
 }
+
+export async function getQuestionIdsVotedByUsers(
+  supabase: SupabaseClient,
+  userIds: string[]
+): Promise<Set<string>> {
+  if (userIds.length === 0) {
+    return new Set();
+  }
+
+  const { data, error } = await supabase
+    .from('votes')
+    .select('question_id')
+    .in('user_id', userIds);
+
+  if (error) {
+    throw error;
+  }
+
+  return new Set((data || []).map((v) => v.question_id));
+}

@@ -2243,6 +2243,8 @@ export default function ExploreScreen() {
               tintColor='#fff'
               colors={["#fff"]}
               progressViewOffset={HEADER_HEIGHT}
+              style={{ zIndex: 20 }}
+              progressBackgroundColor='#222'
             />
           }
         />

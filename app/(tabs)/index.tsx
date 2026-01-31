@@ -1,10 +1,13 @@
 import { ActionButton, ChoiceOption } from "@/components/voting";
+import { useHomeTabReset } from "@/contexts/home-tab-context";
 import { useRealtimeVoteCounts } from "@/lib/hooks/useRealtime";
+import { getFollowing } from "@/lib/queries/follows";
 import { getProfile } from "@/lib/queries/profiles";
 import { Question as DbQuestion, getQuestions } from "@/lib/queries/questions";
 import {
     createVote,
     deleteVote,
+    getQuestionIdsVotedByUsers,
     getUserVotes,
     getVoteCounts,
 } from "@/lib/queries/votes";
@@ -83,9 +86,11 @@ export default function HomeScreen() {
   const { getToken } = useAuth();
   const { user } = useUser();
   const insets = useSafeAreaInsets();
+  const { registerResetCallback, unregisterResetCallback } = useHomeTabReset();
 
   const [selectedTab, setSelectedTab] = React.useState(0);
   const [questions, setQuestions] = React.useState<Question[]>([]);
+  const [friendsVotedQuestionIds, setFriendsVotedQuestionIds] = React.useState<Set<string>>(new Set());
   const [loading, setLoading] = React.useState(true);
   const [displayIndex, setDisplayIndex] = React.useState(0);
   const [swipeProgress, setSwipeProgress] = React.useState(0);
@@ -95,7 +100,20 @@ export default function HomeScreen() {
   const [voteHistory, setVoteHistory] = React.useState<VoteHistoryItem[]>([]);
   const [cardOpacity, setCardOpacity] = React.useState(1);
 
-  const question = questions[displayIndex] ?? null;
+  // Filter questions based on selected tab and exclude already voted
+  const filteredQuestions = React.useMemo(() => {
+    // First filter out questions the user has already voted on
+    let filtered = questions.filter((q) => !q.hasVoted);
+
+    if (selectedTab === 2) {
+      // Friends tab - only show questions that followed users have voted on
+      filtered = filtered.filter((q) => friendsVotedQuestionIds.has(q.id));
+    }
+
+    return filtered;
+  }, [questions, selectedTab, friendsVotedQuestionIds]);
+
+  const question = filteredQuestions[displayIndex] ?? null;
 
   const position = React.useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const entryScale = React.useRef(new Animated.Value(1)).current;
@@ -103,7 +121,7 @@ export default function HomeScreen() {
   const supabaseRef = React.useRef<ReturnType<
     typeof createClerkSupabaseClient
   > | null>(null);
-  const questionsRef = React.useRef(questions);
+  const questionsRef = React.useRef(filteredQuestions);
   const displayIndexRef = React.useRef(displayIndex);
   const voteHistoryRef = React.useRef(voteHistory);
   const userRef = React.useRef(user);
@@ -111,11 +129,25 @@ export default function HomeScreen() {
   const initiallyVotedIdsRef = React.useRef<Set<string>>(new Set());
   const localVoteIdsRef = React.useRef<Set<string>>(new Set());
 
-  questionsRef.current = questions;
+  questionsRef.current = filteredQuestions;
   displayIndexRef.current = displayIndex;
   voteHistoryRef.current = voteHistory;
   userRef.current = user;
   getTokenRef.current = getToken;
+
+  // Reset displayIndex when switching tabs
+  React.useEffect(() => {
+    setDisplayIndex(0);
+    setVoteHistory([]);
+    position.setValue({ x: 0, y: 0 });
+  }, [selectedTab]);
+
+  // Clamp displayIndex if it goes out of bounds (e.g., after voting on last question)
+  React.useEffect(() => {
+    if (filteredQuestions.length > 0 && displayIndex >= filteredQuestions.length) {
+      setDisplayIndex(0);
+    }
+  }, [filteredQuestions.length, displayIndex]);
 
   const getSupabase = () => {
     if (!supabaseRef.current) {
@@ -135,74 +167,107 @@ export default function HomeScreen() {
     transform: [{ translateX: position.x }, { rotate }],
   };
 
+  const fetchQuestions = React.useCallback(async () => {
+    const currentUser = userRef.current;
+    if (!currentUser) return;
+
+    setLoading(true);
+    try {
+      const supabase = getSupabase();
+      const [dbQuestions, followingIds] = await Promise.all([
+        getQuestions(supabase, { limit: 50 }),
+        getFollowing(supabase, currentUser.id),
+      ]);
+
+      // Fetch question IDs that followed users have voted on
+      if (followingIds.length > 0) {
+        const friendsVoted = await getQuestionIdsVotedByUsers(supabase, followingIds);
+        setFriendsVotedQuestionIds(friendsVoted);
+      } else {
+        setFriendsVotedQuestionIds(new Set());
+      }
+
+      if (dbQuestions.length === 0) {
+        setQuestions([]);
+        setLoading(false);
+        return;
+      }
+
+      const questionIds = dbQuestions.map((q) => q.id);
+      const [voteCounts, userVotesMap] = await Promise.all([
+        getVoteCounts(supabase, questionIds),
+        getUserVotes(supabase, currentUser.id, questionIds),
+      ]);
+
+      const eligibleQuestions = dbQuestions.filter(
+        (q) => !userVotesMap.has(q.id) && q.user_id !== currentUser.id,
+      );
+      const creatorIds = [
+        ...new Set(eligibleQuestions.map((q) => q.user_id)),
+      ];
+      const profiles = await Promise.all(
+        creatorIds.map((id) => getProfile(supabase, id).catch(() => null)),
+      );
+      const profileMap = new Map<string, string | null>();
+      creatorIds.forEach((id, i) => {
+        const profile = profiles[i];
+        let displayName: string | null = null;
+        if (profile?.username) {
+          displayName = profile.username.toLowerCase();
+        } else if (profile?.first_name) {
+          displayName = profile.first_name.toLowerCase();
+        }
+        profileMap.set(id, displayName);
+      });
+
+      initiallyVotedIdsRef.current = new Set();
+      localVoteIdsRef.current = new Set();
+
+      const mappedQuestions = eligibleQuestions.map((dbQ) => {
+        const votes = voteCounts.get(dbQ.id) ?? { left: 0, right: 0 };
+        const displayName = profileMap.get(dbQ.user_id) ?? null;
+        const userVote = userVotesMap.get(dbQ.id);
+        return mapDbQuestionToQuestion(
+          dbQ,
+          votes,
+          displayName,
+          dbQ.is_anonymous,
+          currentUser.id,
+          userVote,
+        );
+      });
+
+      setQuestions(mappedQuestions);
+    } catch (err) {
+      console.error("Failed to fetch questions:", err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   React.useEffect(() => {
     if (!user || hasFetchedRef.current) return;
     hasFetchedRef.current = true;
-
-    const fetchQuestions = async () => {
-      try {
-        const supabase = getSupabase();
-        const dbQuestions = await getQuestions(supabase, { limit: 50 });
-
-        if (dbQuestions.length === 0) {
-          setQuestions([]);
-          setLoading(false);
-          return;
-        }
-
-        const questionIds = dbQuestions.map((q) => q.id);
-        const [voteCounts, userVotesMap] = await Promise.all([
-          getVoteCounts(supabase, questionIds),
-          getUserVotes(supabase, user.id, questionIds),
-        ]);
-
-        const eligibleQuestions = dbQuestions.filter(
-          (q) => !userVotesMap.has(q.id) && q.user_id !== user.id,
-        );
-        const creatorIds = [
-          ...new Set(eligibleQuestions.map((q) => q.user_id)),
-        ];
-        const profiles = await Promise.all(
-          creatorIds.map((id) => getProfile(supabase, id).catch(() => null)),
-        );
-        const profileMap = new Map<string, string | null>();
-        creatorIds.forEach((id, i) => {
-          const profile = profiles[i];
-          let displayName: string | null = null;
-          if (profile?.username) {
-            displayName = profile.username.toLowerCase();
-          } else if (profile?.first_name) {
-            displayName = profile.first_name.toLowerCase();
-          }
-          profileMap.set(id, displayName);
-        });
-
-        initiallyVotedIdsRef.current = new Set();
-
-        const mappedQuestions = eligibleQuestions.map((dbQ) => {
-          const votes = voteCounts.get(dbQ.id) ?? { left: 0, right: 0 };
-          const displayName = profileMap.get(dbQ.user_id) ?? null;
-          const userVote = userVotesMap.get(dbQ.id);
-          return mapDbQuestionToQuestion(
-            dbQ,
-            votes,
-            displayName,
-            dbQ.is_anonymous,
-            user.id,
-            userVote,
-          );
-        });
-
-        setQuestions(mappedQuestions);
-      } catch (err) {
-        console.error("Failed to fetch questions:", err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
     fetchQuestions();
-  }, [user]);
+  }, [user, fetchQuestions]);
+
+  // Reset callback for tab press
+  const resetToTop = React.useCallback(() => {
+    setDisplayIndex(0);
+    setSelectedTab(0);
+    setVoteHistory([]);
+    position.setValue({ x: 0, y: 0 });
+    setSwipeProgress(0);
+    setSwipeDirection(null);
+    setCardOpacity(1);
+    fetchQuestions();
+    return true;
+  }, [fetchQuestions, position]);
+
+  React.useEffect(() => {
+    registerResetCallback(resetToTop);
+    return () => unregisterResetCallback();
+  }, [registerResetCallback, unregisterResetCallback, resetToTop]);
 
   const supabase = React.useMemo(() => {
     if (!user) return null;
@@ -385,13 +450,19 @@ export default function HomeScreen() {
 
   actionsRef.current.advance = (direction: "left" | "right" | null) => {
     if (direction) {
+      // When voting, the question will be filtered out automatically
+      // Don't increment index - the next question slides into current position
       actionsRef.current.recordVote(direction);
+      setSwipeProgress(0);
+      setSwipeDirection(null);
+      setCardOpacity(0);
+      return;
     }
 
+    // Skipping (no vote) - need to manually advance index
     const currentQuestions = questionsRef.current;
     const currentIndex = displayIndexRef.current;
 
-    // Don't advance if there are no questions or only one question
     if (currentQuestions.length <= 1) {
       setSwipeProgress(0);
       setSwipeDirection(null);
@@ -427,7 +498,7 @@ export default function HomeScreen() {
 
     Animated.timing(position, {
       toValue: { x, y: 0 },
-      duration: 200,
+      duration: 150,
       useNativeDriver: false,
     }).start(() => {
       actionsRef.current.advance(direction);
@@ -442,7 +513,6 @@ export default function HomeScreen() {
   actionsRef.current.undo = () => {
     const currentUser = userRef.current;
     const history = voteHistoryRef.current;
-    const currentQuestions = questionsRef.current;
 
     if (history.length === 0 || !currentUser) return;
 
@@ -451,35 +521,31 @@ export default function HomeScreen() {
 
     if (!questionId) return;
 
-    // Find the question by ID (index may have changed if array was modified)
-    const actualIndex = currentQuestions.findIndex((q) => q.id === questionId);
-    if (actualIndex === -1) {
-      // Question was removed from array, can't undo
-      console.warn("Cannot undo: question no longer in list");
-      setVoteHistory((prev) => prev.slice(0, -1));
-      return;
-    }
-
     // Remove from local vote tracking
     localVoteIdsRef.current.delete(questionId);
 
     const wasVotedBeforeSession = initiallyVotedIdsRef.current.has(questionId);
 
+    // Update the question in the full questions array (not filtered)
     setQuestions((prev) => {
-      const updated = [...prev];
-      const q = updated[actualIndex];
-      if (q) {
-        const votes = q.votes ?? { left: 0, right: 0 };
-        updated[actualIndex] = {
-          ...q,
-          votes: {
-            ...votes,
-            [lastVote.direction]: Math.max(0, votes[lastVote.direction] - 1),
-          },
-          hasVoted: wasVotedBeforeSession,
-          userVote: wasVotedBeforeSession ? q.userVote : undefined,
-        };
+      const questionIndex = prev.findIndex((q) => q.id === questionId);
+      if (questionIndex === -1) {
+        console.warn("Cannot undo: question no longer in list");
+        return prev;
       }
+
+      const updated = [...prev];
+      const q = updated[questionIndex];
+      const votes = q.votes ?? { left: 0, right: 0 };
+      updated[questionIndex] = {
+        ...q,
+        votes: {
+          ...votes,
+          [lastVote.direction]: Math.max(0, votes[lastVote.direction] - 1),
+        },
+        hasVoted: wasVotedBeforeSession,
+        userVote: wasVotedBeforeSession ? q.userVote : undefined,
+      };
       return updated;
     });
 
@@ -495,7 +561,7 @@ export default function HomeScreen() {
     }
 
     setVoteHistory((prev) => prev.slice(0, -1));
-    setDisplayIndex(actualIndex);
+    // Reset position for the restored question
     position.setValue({ x: 0, y: 0 });
     setSwipeProgress(0);
     setSwipeDirection(null);
@@ -532,21 +598,20 @@ export default function HomeScreen() {
     [position],
   );
 
+  // Animate card entry when question changes (by ID or index)
+  const questionId = question?.id;
   React.useEffect(() => {
     position.setValue({ x: 0, y: 0 });
-    entryScale.setValue(0.98);
-    setCardOpacity(0);
+    entryScale.setValue(0.96);
+    setCardOpacity(1);
 
-    requestAnimationFrame(() => {
-      setCardOpacity(1);
-      Animated.spring(entryScale, {
-        toValue: 1,
-        tension: 50,
-        friction: 7,
-        useNativeDriver: false,
-      }).start();
-    });
-  }, [displayIndex, entryScale, position]);
+    Animated.spring(entryScale, {
+      toValue: 1,
+      tension: 80,
+      friction: 8,
+      useNativeDriver: false,
+    }).start();
+  }, [questionId, displayIndex, entryScale, position]);
 
   React.useEffect(() => {
     const listenerId = position.x.addListener(({ value }) => {
@@ -577,13 +642,17 @@ export default function HomeScreen() {
       <View style={{ flex: 1, backgroundColor: "black", paddingHorizontal: 24 }}>
         <View
           style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 20,
             flexDirection: "row",
             justifyContent: "center",
             alignItems: "center",
             gap: 32,
-            paddingTop: insets.top + 8,
-            paddingBottom: 8,
-            marginBottom: 8,
+            paddingTop: insets.top,
+            paddingBottom: 4,
           }}
         >
           {FEED_TABS.map((tab, index) => (
@@ -594,12 +663,12 @@ export default function HomeScreen() {
                 setSelectedTab(index);
               }}
               style={{
-                padding: 8,
+                padding: 6,
               }}
             >
               <Octicons
                 name={tab.icon}
-                size={24}
+                size={22}
                 color={selectedTab === index ? "white" : "#555"}
               />
             </Pressable>
@@ -618,18 +687,26 @@ export default function HomeScreen() {
     );
   }
 
-  if (!question || questions.length === 0) {
+  if (!question || filteredQuestions.length === 0) {
+    const emptyMessage = selectedTab === 2
+      ? { title: "No questions from friends", subtitle: "Questions your friends vote on will appear here" }
+      : { title: "No questions to vote on", subtitle: "Check back later or create your own!" };
+
     return (
       <View style={{ flex: 1, backgroundColor: "black", paddingHorizontal: 24 }}>
         <View
           style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 20,
             flexDirection: "row",
             justifyContent: "center",
             alignItems: "center",
             gap: 32,
-            paddingTop: insets.top + 8,
-            paddingBottom: 8,
-            marginBottom: 8,
+            paddingTop: insets.top,
+            paddingBottom: 4,
           }}
         >
           {FEED_TABS.map((tab, index) => (
@@ -640,12 +717,12 @@ export default function HomeScreen() {
                 setSelectedTab(index);
               }}
               style={{
-                padding: 8,
+                padding: 6,
               }}
             >
               <Octicons
                 name={tab.icon}
-                size={24}
+                size={22}
                 color={selectedTab === index ? "white" : "#555"}
               />
             </Pressable>
@@ -659,7 +736,7 @@ export default function HomeScreen() {
           }}
         >
           <Text style={{ color: "white", fontSize: 18, textAlign: "center" }}>
-            No questions to vote on
+            {emptyMessage.title}
           </Text>
           <Text
             style={{
@@ -669,7 +746,7 @@ export default function HomeScreen() {
               textAlign: "center",
             }}
           >
-            Check back later or create your own!
+            {emptyMessage.subtitle}
           </Text>
         </View>
       </View>
@@ -722,13 +799,17 @@ export default function HomeScreen() {
     <View style={{ flex: 1, backgroundColor: "black", paddingHorizontal: 24 }}>
       <View
         style={{
+          position: "absolute",
+          top: 0,
+          left: 0,
+          right: 0,
+          zIndex: 20,
           flexDirection: "row",
           justifyContent: "center",
           alignItems: "center",
           gap: 32,
-          paddingTop: insets.top + 8,
-          paddingBottom: 8,
-          marginBottom: 8,
+          paddingTop: insets.top,
+          paddingBottom: 4,
         }}
       >
         {FEED_TABS.map((tab, index) => (
@@ -739,12 +820,12 @@ export default function HomeScreen() {
               setSelectedTab(index);
             }}
             style={{
-              padding: 8,
+              padding: 6,
             }}
           >
             <Octicons
               name={tab.icon}
-              size={24}
+              size={22}
               color={selectedTab === index ? "white" : "#555"}
             />
           </Pressable>
@@ -791,6 +872,7 @@ export default function HomeScreen() {
               backgroundColor: "#0f0f0f",
               overflow: "hidden",
               opacity: cardOpacity,
+              maxHeight: "85%",
             },
             cardStyle,
             { transform: [...cardStyle.transform, { scale: entryScale }] },
@@ -864,7 +946,7 @@ export default function HomeScreen() {
           </View>
 
           <ScrollView
-            style={{ maxHeight: 260 }}
+            style={{ maxHeight: 180 }}
             contentContainerStyle={{ padding: 16, gap: 12 }}
             nestedScrollEnabled
           >
@@ -874,7 +956,7 @@ export default function HomeScreen() {
             {question.promptImageUrl && (
               <Image
                 source={{ uri: question.promptImageUrl }}
-                style={{ width: "100%", height: 180, borderRadius: 16 }}
+                style={{ width: "100%", height: 140, borderRadius: 16 }}
               />
             )}
           </ScrollView>
