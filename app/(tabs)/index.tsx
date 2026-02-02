@@ -3,7 +3,13 @@ import { useHomeTabReset } from "@/contexts/home-tab-context";
 import { useRealtimeVoteCounts } from "@/lib/hooks/useRealtime";
 import { getFollowing } from "@/lib/queries/follows";
 import { getProfile } from "@/lib/queries/profiles";
-import { Question as DbQuestion, getQuestions } from "@/lib/queries/questions";
+import {
+    Question as DbQuestion,
+    getQuestions,
+    getTrendingQuestions,
+    getForYouQuestions,
+    ScoredQuestion,
+} from "@/lib/queries/questions";
 import {
     createVote,
     deleteVote,
@@ -95,7 +101,8 @@ export default function HomeScreen() {
   const { registerResetCallback, unregisterResetCallback } = useHomeTabReset();
 
   const [selectedTab, setSelectedTab] = React.useState(0);
-  const [questions, setQuestions] = React.useState<Question[]>([]);
+  const [questionsByTab, setQuestionsByTab] = React.useState<{ [key: number]: Question[] }>({ 0: [], 1: [], 2: [] });
+  const [loadedTabs, setLoadedTabs] = React.useState<Set<number>>(new Set());
   const [friendsVotedQuestionIds, setFriendsVotedQuestionIds] = React.useState<Set<string>>(new Set());
   const [loading, setLoading] = React.useState(true);
   const [displayIndices, setDisplayIndices] = React.useState<{ [key: number]: number }>({ 0: 0, 1: 0, 2: 0 });
@@ -108,24 +115,10 @@ export default function HomeScreen() {
 
   const displayIndex = displayIndices[selectedTab] ?? 0;
   const voteHistory = voteHistories[selectedTab] ?? [];
+  const questions = React.useMemo(() => questionsByTab[selectedTab] ?? [], [questionsByTab, selectedTab]);
 
-  const setDisplayIndex = React.useCallback((value: number | ((prev: number) => number)) => {
-    setDisplayIndices(prev => ({
-      ...prev,
-      [selectedTab]: typeof value === 'function' ? value(prev[selectedTab] ?? 0) : value
-    }));
-  }, [selectedTab]);
-
-  const setVoteHistory = React.useCallback((value: VoteHistoryItem[] | ((prev: VoteHistoryItem[]) => VoteHistoryItem[])) => {
-    setVoteHistories(prev => ({
-      ...prev,
-      [selectedTab]: typeof value === 'function' ? value(prev[selectedTab] ?? []) : value
-    }));
-  }, [selectedTab]);
-
-  // Filter questions based on selected tab and exclude already voted
+  // Filter questions to exclude already voted
   const filteredQuestions = React.useMemo(() => {
-    // First filter out questions the user has already voted on
     let filtered = questions.filter((q) => !q.hasVoted);
 
     if (selectedTab === 2) {
@@ -158,20 +151,28 @@ export default function HomeScreen() {
   userRef.current = user;
   getTokenRef.current = getToken;
 
+  // Track selectedTab in a ref for use in callbacks
+  const selectedTabRef = React.useRef(selectedTab);
+  selectedTabRef.current = selectedTab;
+
   // Reset swipe state when switching tabs
   React.useEffect(() => {
+    // Stop any running animations before resetting
+    position.stopAnimation();
+    entryScale.stopAnimation();
     position.setValue({ x: 0, y: 0 });
+    entryScale.setValue(1);
     setSwipeProgress(0);
     setSwipeDirection(null);
     setCardOpacity(1);
-  }, [selectedTab]);
+  }, [selectedTab, position, entryScale]);
 
   // Clamp displayIndex if it goes out of bounds (e.g., after voting on last question)
   React.useEffect(() => {
     if (filteredQuestions.length > 0 && displayIndex >= filteredQuestions.length) {
-      setDisplayIndex(0);
+      setDisplayIndices((prev) => ({ ...prev, [selectedTab]: 0 }));
     }
-  }, [filteredQuestions.length, displayIndex]);
+  }, [filteredQuestions.length, displayIndex, selectedTab]);
 
   const getSupabase = () => {
     if (!supabaseRef.current) {
@@ -191,19 +192,18 @@ export default function HomeScreen() {
     transform: [{ translateX: position.x }, { rotate }],
   };
 
-  const fetchQuestions = React.useCallback(async () => {
+  const fetchQuestionsForTab = React.useCallback(async (tab: number) => {
     const currentUser = userRef.current;
     if (!currentUser) return;
 
     setLoading(true);
     try {
       const supabase = getSupabase();
-      const [dbQuestions, followingIds] = await Promise.all([
-        getQuestions(supabase, { limit: 50 }),
-        getFollowing(supabase, currentUser.id),
-      ]);
 
-      // Fetch question IDs that followed users have voted on
+      // Get following IDs (needed for friends tab and friend votes display)
+      const followingIds = await getFollowing(supabase, currentUser.id);
+
+      // Fetch question IDs that followed users have voted on (for friends tab)
       if (followingIds.length > 0) {
         const friendsVoted = await getQuestionIdsVotedByUsers(supabase, followingIds);
         setFriendsVotedQuestionIds(friendsVoted);
@@ -211,13 +211,31 @@ export default function HomeScreen() {
         setFriendsVotedQuestionIds(new Set());
       }
 
+      // Fetch questions based on tab algorithm
+      let dbQuestions: (DbQuestion | ScoredQuestion)[];
+
+      if (tab === 0) {
+        // For You - personalized feed
+        dbQuestions = await getForYouQuestions(supabase, currentUser.id, { limit: 50 });
+      } else if (tab === 1) {
+        // Trending - hotness ranked
+        dbQuestions = await getTrendingQuestions(supabase, currentUser.id, { limit: 50 });
+      } else {
+        // Friends - use regular query, will be filtered by friendsVotedQuestionIds
+        dbQuestions = await getQuestions(supabase, { limit: 50 });
+      }
+
       if (dbQuestions.length === 0) {
-        setQuestions([]);
+        setQuestionsByTab(prev => ({ ...prev, [tab]: [] }));
+        setLoadedTabs(prev => new Set(prev).add(tab));
         setLoading(false);
         return;
       }
 
       const questionIds = dbQuestions.map((q) => q.id);
+
+      // For tab 0 and 1, the SQL functions already exclude user's votes and own questions
+      // But we still need vote counts for display and friend votes
       const [voteCounts, userVotesMap, friendVotesMap] = await Promise.all([
         getVoteCounts(supabase, questionIds),
         getUserVotes(supabase, currentUser.id, questionIds),
@@ -226,9 +244,11 @@ export default function HomeScreen() {
           : Promise.resolve(new Map()),
       ]);
 
-      const eligibleQuestions = dbQuestions.filter(
-        (q) => !userVotesMap.has(q.id) && q.user_id !== currentUser.id,
-      );
+      // For Friends tab, filter to eligible questions
+      const eligibleQuestions = tab === 2
+        ? dbQuestions.filter((q) => !userVotesMap.has(q.id) && q.user_id !== currentUser.id)
+        : dbQuestions; // For You and Trending already filtered by SQL
+
       const creatorIds = [
         ...new Set(eligibleQuestions.map((q) => q.user_id)),
       ];
@@ -251,7 +271,11 @@ export default function HomeScreen() {
       localVoteIdsRef.current = new Set();
 
       const mappedQuestions = eligibleQuestions.map((dbQ) => {
-        const votes = voteCounts.get(dbQ.id) ?? { left: 0, right: 0 };
+        // Use total_votes from scored question if available, otherwise from vote counts
+        const scoredQ = dbQ as ScoredQuestion;
+        const votes = scoredQ.total_votes !== undefined
+          ? { left: voteCounts.get(dbQ.id)?.left ?? 0, right: voteCounts.get(dbQ.id)?.right ?? 0 }
+          : voteCounts.get(dbQ.id) ?? { left: 0, right: 0 };
         const displayName = profileMap.get(dbQ.user_id) ?? null;
         const userVote = userVotesMap.get(dbQ.id);
         const friendVotes = friendVotesMap.get(dbQ.id);
@@ -266,7 +290,8 @@ export default function HomeScreen() {
         );
       });
 
-      setQuestions(mappedQuestions);
+      setQuestionsByTab(prev => ({ ...prev, [tab]: mappedQuestions }));
+      setLoadedTabs(prev => new Set(prev).add(tab));
     } catch (err) {
       console.error("Failed to fetch questions:", err);
     } finally {
@@ -274,24 +299,35 @@ export default function HomeScreen() {
     }
   }, []);
 
+  // Initial fetch for first tab
   React.useEffect(() => {
     if (!user || hasFetchedRef.current) return;
     hasFetchedRef.current = true;
-    fetchQuestions();
-  }, [user, fetchQuestions]);
+    fetchQuestionsForTab(0);
+  }, [user, fetchQuestionsForTab]);
+
+  // Fetch questions when switching to a tab that hasn't been loaded
+  React.useEffect(() => {
+    if (!user || !hasFetchedRef.current) return;
+    if (!loadedTabs.has(selectedTab)) {
+      fetchQuestionsForTab(selectedTab);
+    }
+  }, [selectedTab, user, loadedTabs, fetchQuestionsForTab]);
 
   // Reset callback for tab press
   const resetToTop = React.useCallback(() => {
     setDisplayIndices({ 0: 0, 1: 0, 2: 0 });
     setSelectedTab(0);
     setVoteHistories({ 0: [], 1: [], 2: [] });
+    setQuestionsByTab({ 0: [], 1: [], 2: [] });
+    setLoadedTabs(new Set());
     position.setValue({ x: 0, y: 0 });
     setSwipeProgress(0);
     setSwipeDirection(null);
     setCardOpacity(1);
-    fetchQuestions();
+    fetchQuestionsForTab(0);
     return true;
-  }, [fetchQuestions, position]);
+  }, [fetchQuestionsForTab, position]);
 
   React.useEffect(() => {
     registerResetCallback(resetToTop);
@@ -318,17 +354,23 @@ export default function HomeScreen() {
       };
       const userVote = userVotesMap.get(questionId);
 
-      setQuestions((prev) => {
-        const updated = [...prev];
-        const index = updated.findIndex((q) => q.id === questionId);
-        if (index !== -1) {
-          const question = updated[index];
-          updated[index] = {
-            ...question,
-            votes: newCounts,
-            hasVoted: userVote !== undefined,
-            userVote,
-          };
+      // Update question in all tabs where it exists
+      setQuestionsByTab((prev) => {
+        const updated = { ...prev };
+        for (const tabKey of Object.keys(updated)) {
+          const tab = Number(tabKey);
+          const tabQuestions = updated[tab] ?? [];
+          const index = tabQuestions.findIndex((q) => q.id === questionId);
+          if (index !== -1) {
+            const newTabQuestions = [...tabQuestions];
+            newTabQuestions[index] = {
+              ...newTabQuestions[index],
+              votes: newCounts,
+              hasVoted: userVote !== undefined,
+              userVote,
+            };
+            updated[tab] = newTabQuestions;
+          }
         }
         return updated;
       });
@@ -348,6 +390,7 @@ export default function HomeScreen() {
   const syncAndRemoveVotedQuestions = React.useCallback(async () => {
     const currentUser = userRef.current;
     const currentQuestions = questionsRef.current;
+    const currentTab = selectedTabRef.current;
     if (!currentUser || currentQuestions.length === 0) return;
 
     const supabase = getSupabase();
@@ -362,16 +405,18 @@ export default function HomeScreen() {
 
     if (externalVotedIds.size === 0) return;
 
-    setQuestions((prev) => {
-      const filtered = prev.filter((q) => !externalVotedIds.has(q.id));
-      return filtered;
+    setQuestionsByTab((prev) => {
+      const tabQuestions = prev[currentTab] ?? [];
+      const filtered = tabQuestions.filter((q) => !externalVotedIds.has(q.id));
+      return { ...prev, [currentTab]: filtered };
     });
 
     // Reset display index if needed
-    setDisplayIndex((prev) => {
+    setDisplayIndices((prev) => {
+      const currentIndex = prev[currentTab] ?? 0;
       const newLength = currentQuestions.length - externalVotedIds.size;
-      if (prev >= newLength) {
-        return Math.max(0, newLength - 1);
+      if (currentIndex >= newLength) {
+        return { ...prev, [currentTab]: Math.max(0, newLength - 1) };
       }
       return prev;
     });
@@ -397,83 +442,96 @@ export default function HomeScreen() {
     const currentQuestions = questionsRef.current;
     const currentIndex = displayIndexRef.current;
     const currentQuestion = currentQuestions[currentIndex];
+    const currentTab = selectedTabRef.current;
 
     if (!currentUser || !currentQuestion) return;
 
     if (currentQuestion.hasVoted || currentQuestion.isOwnQuestion) return;
 
+    const questionId = currentQuestion.id;
+
     // Track this as a local vote so realtime handler doesn't remove it
-    localVoteIdsRef.current.add(currentQuestion.id);
+    localVoteIdsRef.current.add(questionId);
 
-    setQuestions((prev) => {
-      const updated = [...prev];
-      const q = updated[currentIndex];
-      if (q) {
-        const votes = q.votes ?? { left: 0, right: 0 };
-        updated[currentIndex] = {
-          ...q,
-          votes: { ...votes, [direction]: votes[direction] + 1 },
-          hasVoted: true,
-          userVote: direction,
-        };
-      }
-      return updated;
-    });
-
-    setVoteHistory((prev) => [
-      ...prev,
-      {
-        questionId: currentQuestion.id,
-        questionIndex: currentIndex,
-        direction,
-      },
-    ]);
-
-    const supabase = getSupabase();
-    try {
-      await createVote(supabase, currentQuestion.id, currentUser.id, direction);
-
-      const updatedVoteCounts = await getVoteCounts(supabase, [
-        currentQuestion.id,
-      ]);
-      const newCounts = updatedVoteCounts.get(currentQuestion.id) ?? {
-        left: 0,
-        right: 0,
-      };
-
-      setQuestions((prev) => {
-        const updated = [...prev];
-        const q = updated[currentIndex];
-        if (q && q.id === currentQuestion.id) {
-          updated[currentIndex] = {
+    setQuestionsByTab((prev) => {
+      const tabQuestions = prev[currentTab] ?? [];
+      const updated = tabQuestions.map((q) => {
+        if (q.id === questionId) {
+          const votes = q.votes ?? { left: 0, right: 0 };
+          return {
             ...q,
-            votes: newCounts,
+            votes: { ...votes, [direction]: votes[direction] + 1 },
             hasVoted: true,
             userVote: direction,
           };
         }
-        return updated;
+        return q;
+      });
+      return { ...prev, [currentTab]: updated };
+    });
+
+    setVoteHistories((prev) => ({
+      ...prev,
+      [currentTab]: [
+        ...(prev[currentTab] ?? []),
+        {
+          questionId,
+          questionIndex: currentIndex,
+          direction,
+        },
+      ],
+    }));
+
+    const supabase = getSupabase();
+    try {
+      await createVote(supabase, questionId, currentUser.id, direction);
+
+      const updatedVoteCounts = await getVoteCounts(supabase, [questionId]);
+      const newCounts = updatedVoteCounts.get(questionId) ?? {
+        left: 0,
+        right: 0,
+      };
+
+      setQuestionsByTab((prev) => {
+        const tabQuestions = prev[currentTab] ?? [];
+        const updated = tabQuestions.map((q) => {
+          if (q.id === questionId) {
+            return {
+              ...q,
+              votes: newCounts,
+              hasVoted: true,
+              userVote: direction,
+            };
+          }
+          return q;
+        });
+        return { ...prev, [currentTab]: updated };
       });
     } catch (err) {
       console.error("Failed to record vote:", err);
-      setQuestions((prev) => {
-        const updated = [...prev];
-        const q = updated[currentIndex];
-        if (q && q.id === currentQuestion.id) {
-          const votes = q.votes ?? { left: 0, right: 0 };
-          updated[currentIndex] = {
-            ...q,
-            votes: {
-              ...votes,
-              [direction]: Math.max(0, votes[direction] - 1),
-            },
-            hasVoted: false,
-            userVote: undefined,
-          };
-        }
-        return updated;
+      setQuestionsByTab((prev) => {
+        const tabQuestions = prev[currentTab] ?? [];
+        const updated = tabQuestions.map((q) => {
+          if (q.id === questionId) {
+            const votes = q.votes ?? { left: 0, right: 0 };
+            return {
+              ...q,
+              votes: {
+                ...votes,
+                [direction]: Math.max(0, votes[direction] - 1),
+              },
+              hasVoted: false,
+              userVote: undefined,
+            };
+          }
+          return q;
+        });
+        return { ...prev, [currentTab]: updated };
       });
-      setVoteHistory((prev) => prev.slice(0, -1));
+      setVoteHistories((prev) => ({
+        ...prev,
+        [currentTab]: (prev[currentTab] ?? []).slice(0, -1),
+      }));
     }
   };
 
@@ -491,6 +549,7 @@ export default function HomeScreen() {
     // Skipping (no vote) - need to manually advance index
     const currentQuestions = questionsRef.current;
     const currentIndex = displayIndexRef.current;
+    const currentTab = selectedTabRef.current;
 
     if (currentQuestions.length <= 1) {
       setSwipeProgress(0);
@@ -504,7 +563,7 @@ export default function HomeScreen() {
     setSwipeProgress(0);
     setSwipeDirection(null);
     setCardOpacity(0);
-    setDisplayIndex(nextIdx);
+    setDisplayIndices((prev) => ({ ...prev, [currentTab]: nextIdx }));
   };
 
   actionsRef.current.resetCard = () => {
@@ -542,6 +601,7 @@ export default function HomeScreen() {
   actionsRef.current.undo = () => {
     const currentUser = userRef.current;
     const history = voteHistoryRef.current;
+    const currentTab = selectedTabRef.current;
 
     if (history.length === 0 || !currentUser) return;
 
@@ -556,14 +616,15 @@ export default function HomeScreen() {
     const wasVotedBeforeSession = initiallyVotedIdsRef.current.has(questionId);
 
     // Update the question in the full questions array (not filtered)
-    setQuestions((prev) => {
-      const questionIndex = prev.findIndex((q) => q.id === questionId);
+    setQuestionsByTab((prev) => {
+      const tabQuestions = prev[currentTab] ?? [];
+      const questionIndex = tabQuestions.findIndex((q) => q.id === questionId);
       if (questionIndex === -1) {
         console.warn("Cannot undo: question no longer in list");
         return prev;
       }
 
-      const updated = [...prev];
+      const updated = [...tabQuestions];
       const q = updated[questionIndex];
       const votes = q.votes ?? { left: 0, right: 0 };
       updated[questionIndex] = {
@@ -575,7 +636,7 @@ export default function HomeScreen() {
         hasVoted: wasVotedBeforeSession,
         userVote: wasVotedBeforeSession ? q.userVote : undefined,
       };
-      return updated;
+      return { ...prev, [currentTab]: updated };
     });
 
     if (!wasVotedBeforeSession) {
@@ -589,7 +650,10 @@ export default function HomeScreen() {
         });
     }
 
-    setVoteHistory((prev) => prev.slice(0, -1));
+    setVoteHistories((prev) => ({
+      ...prev,
+      [currentTab]: (prev[currentTab] ?? []).slice(0, -1),
+    }));
     // Reset position for the restored question
     position.setValue({ x: 0, y: 0 });
     setSwipeProgress(0);
@@ -598,6 +662,9 @@ export default function HomeScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
+  // Recreate panResponder when tab changes OR when question becomes available
+  // This ensures fresh gesture handlers when the card first renders after loading
+  const hasQuestion = question !== null;
   const panResponder = React.useMemo(
     () =>
       PanResponder.create({
@@ -624,7 +691,8 @@ export default function HomeScreen() {
           actionsRef.current.resetCard();
         },
       }),
-    [position],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selectedTab, hasQuestion],
   );
 
   // Animate card entry when question changes (by ID or index)
@@ -664,7 +732,7 @@ export default function HomeScreen() {
     });
 
     return () => position.x.removeListener(listenerId);
-  }, [position.x]);
+  }, [position.x, selectedTab]); // Re-register listener on tab change
 
   if (loading) {
     return (
@@ -785,7 +853,7 @@ export default function HomeScreen() {
   const wasVotedBeforeSession = initiallyVotedIdsRef.current.has(question.id);
   const isResultsMode = wasVotedBeforeSession || question.isOwnQuestion;
 
-  const currentVotes = question.votes ?? { left: 0, right: 0 };
+  const currentVotes = question?.votes ?? { left: 0, right: 0 };
   const currentTotal = currentVotes.left + currentVotes.right;
 
   const previewVotes = {

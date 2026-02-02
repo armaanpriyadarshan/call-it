@@ -159,3 +159,66 @@ export async function updateQuestion(
 
   return question;
 }
+
+// Extended question type with algorithm scores
+export interface ScoredQuestion extends Question {
+  total_votes: number;
+  relevance_score?: number;
+  hotness_score?: number;
+  votes_24h?: number;
+}
+
+export async function getTrendingQuestions(
+  supabase: SupabaseClient,
+  userId: string,
+  options?: { limit?: number }
+): Promise<ScoredQuestion[]> {
+  const { data, error } = await supabase.rpc('get_trending_questions', {
+    p_user_id: userId,
+    p_limit: options?.limit ?? 50,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  return data || [];
+}
+
+export async function getForYouQuestions(
+  supabase: SupabaseClient,
+  userId: string,
+  options?: { limit?: number }
+): Promise<ScoredQuestion[]> {
+  const { data, error } = await supabase.rpc('get_for_you_questions', {
+    p_user_id: userId,
+    p_limit: options?.limit ?? 50,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  return data || [];
+}
+
+export interface CategoryPreference {
+  category: string;
+  vote_count: number;
+  affinity_score: number;
+}
+
+export async function getUserCategoryPreferences(
+  supabase: SupabaseClient,
+  userId: string
+): Promise<CategoryPreference[]> {
+  const { data, error } = await supabase.rpc('get_user_category_preferences', {
+    p_user_id: userId,
+  });
+
+  if (error) {
+    throw error;
+  }
+
+  return data || [];
+}
