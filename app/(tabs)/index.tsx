@@ -98,13 +98,30 @@ export default function HomeScreen() {
   const [questions, setQuestions] = React.useState<Question[]>([]);
   const [friendsVotedQuestionIds, setFriendsVotedQuestionIds] = React.useState<Set<string>>(new Set());
   const [loading, setLoading] = React.useState(true);
-  const [displayIndex, setDisplayIndex] = React.useState(0);
+  const [displayIndices, setDisplayIndices] = React.useState<{ [key: number]: number }>({ 0: 0, 1: 0, 2: 0 });
   const [swipeProgress, setSwipeProgress] = React.useState(0);
   const [swipeDirection, setSwipeDirection] = React.useState<
     "left" | "right" | null
   >(null);
-  const [voteHistory, setVoteHistory] = React.useState<VoteHistoryItem[]>([]);
+  const [voteHistories, setVoteHistories] = React.useState<{ [key: number]: VoteHistoryItem[] }>({ 0: [], 1: [], 2: [] });
   const [cardOpacity, setCardOpacity] = React.useState(1);
+
+  const displayIndex = displayIndices[selectedTab] ?? 0;
+  const voteHistory = voteHistories[selectedTab] ?? [];
+
+  const setDisplayIndex = React.useCallback((value: number | ((prev: number) => number)) => {
+    setDisplayIndices(prev => ({
+      ...prev,
+      [selectedTab]: typeof value === 'function' ? value(prev[selectedTab] ?? 0) : value
+    }));
+  }, [selectedTab]);
+
+  const setVoteHistory = React.useCallback((value: VoteHistoryItem[] | ((prev: VoteHistoryItem[]) => VoteHistoryItem[])) => {
+    setVoteHistories(prev => ({
+      ...prev,
+      [selectedTab]: typeof value === 'function' ? value(prev[selectedTab] ?? []) : value
+    }));
+  }, [selectedTab]);
 
   // Filter questions based on selected tab and exclude already voted
   const filteredQuestions = React.useMemo(() => {
@@ -141,11 +158,12 @@ export default function HomeScreen() {
   userRef.current = user;
   getTokenRef.current = getToken;
 
-  // Reset displayIndex when switching tabs
+  // Reset swipe state when switching tabs
   React.useEffect(() => {
-    setDisplayIndex(0);
-    setVoteHistory([]);
     position.setValue({ x: 0, y: 0 });
+    setSwipeProgress(0);
+    setSwipeDirection(null);
+    setCardOpacity(1);
   }, [selectedTab]);
 
   // Clamp displayIndex if it goes out of bounds (e.g., after voting on last question)
@@ -264,9 +282,9 @@ export default function HomeScreen() {
 
   // Reset callback for tab press
   const resetToTop = React.useCallback(() => {
-    setDisplayIndex(0);
+    setDisplayIndices({ 0: 0, 1: 0, 2: 0 });
     setSelectedTab(0);
-    setVoteHistory([]);
+    setVoteHistories({ 0: [], 1: [], 2: [] });
     position.setValue({ x: 0, y: 0 });
     setSwipeProgress(0);
     setSwipeDirection(null);
