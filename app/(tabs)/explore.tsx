@@ -26,9 +26,11 @@ import {
 import {
   createVote,
   deleteVote,
+  getFriendVotesForQuestions,
   getUserVotes,
   getVoteCounts,
 } from "@/lib/queries/votes";
+import { getFollowing } from "@/lib/queries/follows";
 import { createClerkSupabaseClient } from "@/lib/supabase";
 import type { Question, User, VoteHistoryItem } from "@/types";
 import { calculateVoteData } from "@/utils/voting";
@@ -59,6 +61,7 @@ function mapDbQuestionToQuestion(
   isAnonymous: boolean,
   currentUserId: string | null,
   userVote: "left" | "right" | undefined,
+  friendVotes?: { left: { userId: string; avatarUrl: string | null }[]; right: { userId: string; avatarUrl: string | null }[] },
 ): Question {
   const isOwnQuestion =
     currentUserId !== null && dbQuestion.user_id === currentUserId;
@@ -87,6 +90,10 @@ function mapDbQuestionToQuestion(
     hasVoted: userVote !== undefined,
     userVote,
     isOwnQuestion,
+    friendVotes: friendVotes ? {
+      left: friendVotes.left.map(f => ({ userId: f.userId, avatarUrl: f.avatarUrl })),
+      right: friendVotes.right.map(f => ({ userId: f.userId, avatarUrl: f.avatarUrl })),
+    } : undefined,
   };
 }
 
@@ -213,11 +220,20 @@ export default function ExploreScreen() {
         }
 
         const questionIds = dbQuestions.map((q) => q.id);
-        const [voteCounts, userVotesMap] = await Promise.all([
+
+        // Get following IDs for friend votes
+        const followingIds = currentUser
+          ? await getFollowing(supabase, currentUser.id)
+          : [];
+
+        const [voteCounts, userVotesMap, friendVotesMap] = await Promise.all([
           getVoteCounts(supabase, questionIds),
           currentUser
             ? getUserVotes(supabase, currentUser.id, questionIds)
             : Promise.resolve(new Map<string, "left" | "right">()),
+          followingIds.length > 0
+            ? getFriendVotesForQuestions(supabase, questionIds, followingIds)
+            : Promise.resolve(new Map()),
         ]);
 
         const creatorIds = [...new Set(dbQuestions.map((q) => q.user_id))];
@@ -243,6 +259,7 @@ export default function ExploreScreen() {
           const votes = voteCounts.get(dbQ.id) ?? { left: 0, right: 0 };
           const displayName = profileMap.get(dbQ.user_id) ?? null;
           const userVote = userVotesMap.get(dbQ.id);
+          const friendVotes = friendVotesMap.get(dbQ.id);
           return mapDbQuestionToQuestion(
             dbQ,
             votes,
@@ -250,6 +267,7 @@ export default function ExploreScreen() {
             dbQ.is_anonymous,
             currentUser?.id ?? null,
             userVote,
+            friendVotes,
           );
         });
 
@@ -1545,6 +1563,7 @@ export default function ExploreScreen() {
                 }
                 highlight={isResultsMode ? 0 : leftHighlight}
                 resultsMode={isResultsMode}
+                friendVotes={question.friendVotes?.left?.map(f => ({ userId: f.userId, avatarUrl: f.avatarUrl }))}
               />
 
               <ChoiceOption
@@ -1561,6 +1580,7 @@ export default function ExploreScreen() {
                 }
                 highlight={isResultsMode ? 0 : rightHighlight}
                 resultsMode={isResultsMode}
+                friendVotes={question.friendVotes?.right?.map(f => ({ userId: f.userId, avatarUrl: f.avatarUrl }))}
               />
 
               <Text style={{ color: "#777", fontSize: 12 }}>

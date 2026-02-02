@@ -1,6 +1,7 @@
 import type { Choice } from "@/types";
 import React from "react";
 import { Image, Text, View } from "react-native";
+import { FriendAvatars, FriendAvatarData } from "./FriendAvatars";
 import { PercentageBar } from "./PercentageBar";
 import { PlusOneBadge } from "./PlusOneBadge";
 import { VoteDisplay } from "./VoteDisplay";
@@ -15,6 +16,7 @@ export const ChoiceOption: React.FC<{
   isSelected: boolean;
   highlight: number;
   resultsMode?: boolean;
+  friendVotes?: FriendAvatarData[];
 }> = ({
   choice,
   direction,
@@ -25,6 +27,7 @@ export const ChoiceOption: React.FC<{
   isSelected,
   highlight,
   resultsMode = false,
+  friendVotes = [],
 }) => {
   const isRight = direction === "right";
   const showPlusOne =
@@ -113,6 +116,13 @@ export const ChoiceOption: React.FC<{
               >
                 {choice.label}
               </Text>
+              {friendVotes.length > 0 && (
+                <FriendAvatars
+                  friends={friendVotes}
+                  opacity={resultsMode ? 1 : swipeProgress}
+                  position={isRight ? "right" : "left"}
+                />
+              )}
             </View>
 
             <VoteDisplay

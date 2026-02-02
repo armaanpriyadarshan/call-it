@@ -279,3 +279,77 @@ export async function getQuestionIdsVotedByUsers(
 
   return new Set((data || []).map((v) => v.question_id));
 }
+
+export interface FriendVote {
+  userId: string;
+  choice: 'left' | 'right';
+  avatarUrl: string | null;
+}
+
+export async function getFriendVotesForQuestions(
+  supabase: SupabaseClient,
+  questionIds: string[],
+  friendIds: string[]
+): Promise<Map<string, { left: FriendVote[]; right: FriendVote[] }>> {
+  if (questionIds.length === 0 || friendIds.length === 0) {
+    return new Map();
+  }
+
+  // Get votes from friends for these questions
+  const { data: votes, error: votesError } = await supabase
+    .from('votes')
+    .select('question_id, user_id, choice')
+    .in('question_id', questionIds)
+    .in('user_id', friendIds);
+
+  if (votesError) {
+    throw votesError;
+  }
+
+  if (!votes || votes.length === 0) {
+    return new Map();
+  }
+
+  // Get unique friend IDs who voted
+  const voterIds = [...new Set(votes.map((v) => v.user_id))];
+
+  // Get profiles for these friends
+  const { data: profiles, error: profilesError } = await supabase
+    .from('profiles')
+    .select('user_id, avatar_url')
+    .in('user_id', voterIds);
+
+  if (profilesError) {
+    throw profilesError;
+  }
+
+  // Create avatar map
+  const avatarMap = new Map<string, string | null>();
+  for (const profile of profiles || []) {
+    avatarMap.set(profile.user_id, profile.avatar_url);
+  }
+
+  // Group votes by question
+  const result = new Map<string, { left: FriendVote[]; right: FriendVote[] }>();
+
+  for (const vote of votes) {
+    if (!result.has(vote.question_id)) {
+      result.set(vote.question_id, { left: [], right: [] });
+    }
+
+    const questionVotes = result.get(vote.question_id)!;
+    const friendVote: FriendVote = {
+      userId: vote.user_id,
+      choice: vote.choice as 'left' | 'right',
+      avatarUrl: avatarMap.get(vote.user_id) || null,
+    };
+
+    if (vote.choice === 'left') {
+      questionVotes.left.push(friendVote);
+    } else {
+      questionVotes.right.push(friendVote);
+    }
+  }
+
+  return result;
+}

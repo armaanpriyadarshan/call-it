@@ -7,6 +7,7 @@ import { Question as DbQuestion, getQuestions } from "@/lib/queries/questions";
 import {
     createVote,
     deleteVote,
+    getFriendVotesForQuestions,
     getQuestionIdsVotedByUsers,
     getUserVotes,
     getVoteCounts,
@@ -44,6 +45,7 @@ function mapDbQuestionToQuestion(
   isAnonymous: boolean,
   currentUserId: string | null,
   userVote: "left" | "right" | undefined,
+  friendVotes?: { left: { userId: string; avatarUrl: string | null }[]; right: { userId: string; avatarUrl: string | null }[] },
 ): Question {
   const isOwnQuestion =
     currentUserId !== null && dbQuestion.user_id === currentUserId;
@@ -72,6 +74,10 @@ function mapDbQuestionToQuestion(
     hasVoted: userVote !== undefined,
     userVote,
     isOwnQuestion,
+    friendVotes: friendVotes ? {
+      left: friendVotes.left.map(f => ({ userId: f.userId, avatarUrl: f.avatarUrl })),
+      right: friendVotes.right.map(f => ({ userId: f.userId, avatarUrl: f.avatarUrl })),
+    } : undefined,
   };
 }
 
@@ -194,9 +200,12 @@ export default function HomeScreen() {
       }
 
       const questionIds = dbQuestions.map((q) => q.id);
-      const [voteCounts, userVotesMap] = await Promise.all([
+      const [voteCounts, userVotesMap, friendVotesMap] = await Promise.all([
         getVoteCounts(supabase, questionIds),
         getUserVotes(supabase, currentUser.id, questionIds),
+        followingIds.length > 0
+          ? getFriendVotesForQuestions(supabase, questionIds, followingIds)
+          : Promise.resolve(new Map()),
       ]);
 
       const eligibleQuestions = dbQuestions.filter(
@@ -227,6 +236,7 @@ export default function HomeScreen() {
         const votes = voteCounts.get(dbQ.id) ?? { left: 0, right: 0 };
         const displayName = profileMap.get(dbQ.user_id) ?? null;
         const userVote = userVotesMap.get(dbQ.id);
+        const friendVotes = friendVotesMap.get(dbQ.id);
         return mapDbQuestionToQuestion(
           dbQ,
           votes,
@@ -234,6 +244,7 @@ export default function HomeScreen() {
           dbQ.is_anonymous,
           currentUser.id,
           userVote,
+          friendVotes,
         );
       });
 
@@ -989,6 +1000,7 @@ export default function HomeScreen() {
                     : 0
               }
               resultsMode={isResultsMode}
+              friendVotes={question.friendVotes?.left?.map(f => ({ userId: f.userId, avatarUrl: f.avatarUrl }))}
             />
             <ChoiceOption
               choice={question.right}
@@ -1010,6 +1022,7 @@ export default function HomeScreen() {
                     : 0
               }
               resultsMode={isResultsMode}
+              friendVotes={question.friendVotes?.right?.map(f => ({ userId: f.userId, avatarUrl: f.avatarUrl }))}
             />
             <Text style={{ color: "#777", fontSize: 12 }}>
               {isResultsMode
