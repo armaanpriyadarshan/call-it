@@ -1,4 +1,5 @@
-import { Tabs } from "expo-router";
+import { useAuth } from "@clerk/clerk-expo";
+import { Redirect, Tabs } from "expo-router";
 import React from "react";
 
 import { HapticTab } from "@/components/haptic-tab";
@@ -132,6 +133,13 @@ function TabLayoutContent() {
 }
 
 export default function TabLayout() {
+  const { isSignedIn } = useAuth();
+
+  // Redirect to auth if not signed in
+  if (!isSignedIn) {
+    return <Redirect href="/(auth)" />;
+  }
+
   return (
     <HomeTabProvider>
       <ExploreTabProvider>
