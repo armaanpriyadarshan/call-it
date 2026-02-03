@@ -238,7 +238,6 @@ const AutocompleteInput: React.FC<{
     </View>
   );
 };
-// Helper to convert DB question to display Question type
 function mapDbQuestionToQuestion(
   dbQuestion: DbQuestion,
   voteCounts: Map<string, { left: number; right: number }>,
@@ -272,7 +271,6 @@ function mapDbQuestionToQuestion(
   };
 }
 
-// Helper to convert vote history from DB to display format
 function mapVoteHistoryItem(vote: VoteWithQuestion): VoteHistoryItem {
   return {
     questionId: vote.question_id,

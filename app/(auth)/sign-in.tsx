@@ -64,7 +64,6 @@ export default function SignInEmail() {
         await setActive({ session: attempt.createdSessionId });
         router.replace("/(tabs)");
       } else {
-        // Rare: additional steps required (2FA, etc.)
         setServerError("Sign-in requires additional steps. Please try again.");
       }
     } catch (err) {

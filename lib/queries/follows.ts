@@ -25,7 +25,6 @@ export async function getUserStats(
     throw error;
   }
 
-  // The function returns an array with one row
   const stats = data?.[0] ?? {
     questions_count: 0,
     followers_count: 0,
@@ -139,14 +138,12 @@ export async function getFollowersWithProfiles(
   supabase: SupabaseClient,
   userId: string
 ): Promise<FollowerWithProfile[]> {
-  // Get follower IDs
   const followerIds = await getFollowers(supabase, userId);
 
   if (followerIds.length === 0) {
     return [];
   }
 
-  // Get profiles for those IDs
   const { data, error } = await supabase
     .from('profiles')
     .select('user_id, username, first_name, last_name, avatar_url')
@@ -156,12 +153,10 @@ export async function getFollowersWithProfiles(
     throw error;
   }
 
-  // Create a map for quick lookup
   const profileMap = new Map(
     (data || []).map((p) => [p.user_id, p])
   );
 
-  // Return in the same order as followerIds, with profile info
   return followerIds.map((id) => {
     const profile = profileMap.get(id);
     return {
@@ -178,14 +173,12 @@ export async function getFollowingWithProfiles(
   supabase: SupabaseClient,
   userId: string
 ): Promise<FollowerWithProfile[]> {
-  // Get following IDs
   const followingIds = await getFollowing(supabase, userId);
 
   if (followingIds.length === 0) {
     return [];
   }
 
-  // Get profiles for those IDs
   const { data, error } = await supabase
     .from('profiles')
     .select('user_id, username, first_name, last_name, avatar_url')
@@ -195,12 +188,10 @@ export async function getFollowingWithProfiles(
     throw error;
   }
 
-  // Create a map for quick lookup
   const profileMap = new Map(
     (data || []).map((p) => [p.user_id, p])
   );
 
-  // Return in the same order as followingIds, with profile info
   return followingIds.map((id) => {
     const profile = profileMap.get(id);
     return {

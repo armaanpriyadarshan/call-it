@@ -28,7 +28,6 @@ export async function searchQuestions(
   const offset = options?.offset ?? 0;
   const pattern = `%${query}%`;
 
-  // Get total count first
   const { count, error: countError } = await supabase
     .from("questions")
     .select("*", { count: "exact", head: true })
@@ -40,7 +39,6 @@ export async function searchQuestions(
     throw countError;
   }
 
-  // Get paginated results
   const { data, error } = await supabase
     .from("questions")
     .select("*")
@@ -73,7 +71,6 @@ export async function searchProfiles(
   const offset = options?.offset ?? 0;
   const pattern = `%${query}%`;
 
-  // Get total count first
   const { count, error: countError } = await supabase
     .from("profiles")
     .select("*", { count: "exact", head: true })
@@ -85,7 +82,6 @@ export async function searchProfiles(
     throw countError;
   }
 
-  // Get paginated results
   const { data, error } = await supabase
     .from("profiles")
     .select("*")

@@ -117,12 +117,10 @@ export default function HomeScreen() {
   const voteHistory = voteHistories[selectedTab] ?? [];
   const questions = React.useMemo(() => questionsByTab[selectedTab] ?? [], [questionsByTab, selectedTab]);
 
-  // Filter questions to exclude already voted
   const filteredQuestions = React.useMemo(() => {
     let filtered = questions.filter((q) => !q.hasVoted);
 
     if (selectedTab === 2) {
-      // Friends tab - only show questions that followed users have voted on
       filtered = filtered.filter((q) => friendsVotedQuestionIds.has(q.id));
     }
 
@@ -151,13 +149,10 @@ export default function HomeScreen() {
   userRef.current = user;
   getTokenRef.current = getToken;
 
-  // Track selectedTab in a ref for use in callbacks
   const selectedTabRef = React.useRef(selectedTab);
   selectedTabRef.current = selectedTab;
 
-  // Reset swipe state when switching tabs or when loading completes
   React.useEffect(() => {
-    // Stop any running animations before resetting
     position.stopAnimation();
     entryScale.stopAnimation();
     position.setValue({ x: 0, y: 0 });
@@ -167,7 +162,6 @@ export default function HomeScreen() {
     setCardOpacity(1);
   }, [selectedTab, loading, position, entryScale]);
 
-  // Clamp displayIndex if it goes out of bounds (e.g., after voting on last question)
   React.useEffect(() => {
     if (filteredQuestions.length > 0 && displayIndex >= filteredQuestions.length) {
       setDisplayIndices((prev) => ({ ...prev, [selectedTab]: 0 }));
@@ -200,10 +194,8 @@ export default function HomeScreen() {
     try {
       const supabase = getSupabase();
 
-      // Get following IDs (needed for friends tab and friend votes display)
       const followingIds = await getFollowing(supabase, currentUser.id);
 
-      // Fetch question IDs that followed users have voted on (for friends tab)
       if (followingIds.length > 0) {
         const friendsVoted = await getQuestionIdsVotedByUsers(supabase, followingIds);
         setFriendsVotedQuestionIds(friendsVoted);
@@ -211,17 +203,13 @@ export default function HomeScreen() {
         setFriendsVotedQuestionIds(new Set());
       }
 
-      // Fetch questions based on tab algorithm
       let dbQuestions: (DbQuestion | ScoredQuestion)[];
 
       if (tab === 0) {
-        // For You - personalized feed
         dbQuestions = await getForYouQuestions(supabase, currentUser.id, { limit: 50 });
       } else if (tab === 1) {
-        // Trending - hotness ranked
         dbQuestions = await getTrendingQuestions(supabase, currentUser.id, { limit: 50 });
       } else {
-        // Friends - use regular query, will be filtered by friendsVotedQuestionIds
         dbQuestions = await getQuestions(supabase, { limit: 50 });
       }
 
@@ -234,8 +222,6 @@ export default function HomeScreen() {
 
       const questionIds = dbQuestions.map((q) => q.id);
 
-      // For tab 0 and 1, the SQL functions already exclude user's votes and own questions
-      // But we still need vote counts for display and friend votes
       const [voteCounts, userVotesMap, friendVotesMap] = await Promise.all([
         getVoteCounts(supabase, questionIds),
         getUserVotes(supabase, currentUser.id, questionIds),
@@ -244,10 +230,9 @@ export default function HomeScreen() {
           : Promise.resolve(new Map()),
       ]);
 
-      // For Friends tab, filter to eligible questions
       const eligibleQuestions = tab === 2
         ? dbQuestions.filter((q) => !userVotesMap.has(q.id) && q.user_id !== currentUser.id)
-        : dbQuestions; // For You and Trending already filtered by SQL
+        : dbQuestions;
 
       const creatorIds = [
         ...new Set(eligibleQuestions.map((q) => q.user_id)),
@@ -271,7 +256,6 @@ export default function HomeScreen() {
       localVoteIdsRef.current = new Set();
 
       const mappedQuestions = eligibleQuestions.map((dbQ) => {
-        // Use total_votes from scored question if available, otherwise from vote counts
         const scoredQ = dbQ as ScoredQuestion;
         const votes = scoredQ.total_votes !== undefined
           ? { left: voteCounts.get(dbQ.id)?.left ?? 0, right: voteCounts.get(dbQ.id)?.right ?? 0 }
@@ -299,14 +283,12 @@ export default function HomeScreen() {
     }
   }, []);
 
-  // Initial fetch for first tab
   React.useEffect(() => {
     if (!user || hasFetchedRef.current) return;
     hasFetchedRef.current = true;
     fetchQuestionsForTab(0);
   }, [user, fetchQuestionsForTab]);
 
-  // Fetch questions when switching to a tab that hasn't been loaded
   React.useEffect(() => {
     if (!user || !hasFetchedRef.current) return;
     if (!loadedTabs.has(selectedTab)) {
@@ -314,7 +296,6 @@ export default function HomeScreen() {
     }
   }, [selectedTab, user, loadedTabs, fetchQuestionsForTab]);
 
-  // Reset callback for tab press
   const resetToTop = React.useCallback(() => {
     setDisplayIndices({ 0: 0, 1: 0, 2: 0 });
     setSelectedTab(0);
@@ -354,7 +335,6 @@ export default function HomeScreen() {
       };
       const userVote = userVotesMap.get(questionId);
 
-      // Update question in all tabs where it exists
       setQuestionsByTab((prev) => {
         const updated = { ...prev };
         for (const tabKey of Object.keys(updated)) {
@@ -380,13 +360,10 @@ export default function HomeScreen() {
 
   const questionIds = React.useMemo(() => {
     return questions.map((q) => q.id);
-  }, [questions]);
+  }, [questions]  );
 
-  // Re-enabled - was not the cause of skipping
   useRealtimeVoteCounts(supabase, questionIds, refreshVoteCounts);
 
-
-  // Remove questions that were voted on in other tabs (runs on tab focus)
   const syncAndRemoveVotedQuestions = React.useCallback(async () => {
     const currentUser = userRef.current;
     const currentQuestions = questionsRef.current;
@@ -398,7 +375,6 @@ export default function HomeScreen() {
     const userVotesMap = await getUserVotes(supabase, currentUser.id, ids);
 
     const votedIds = new Set(userVotesMap.keys());
-    // Only consider external votes (not local ones we're tracking)
     const externalVotedIds = new Set(
       [...votedIds].filter((id) => !localVoteIdsRef.current.has(id))
     );
@@ -411,7 +387,6 @@ export default function HomeScreen() {
       return { ...prev, [currentTab]: filtered };
     });
 
-    // Reset display index if needed
     setDisplayIndices((prev) => {
       const currentIndex = prev[currentTab] ?? 0;
       const newLength = currentQuestions.length - externalVotedIds.size;
@@ -450,7 +425,6 @@ export default function HomeScreen() {
 
     const questionId = currentQuestion.id;
 
-    // Track this as a local vote so realtime handler doesn't remove it
     localVoteIdsRef.current.add(questionId);
 
     setQuestionsByTab((prev) => {
@@ -537,8 +511,6 @@ export default function HomeScreen() {
 
   actionsRef.current.advance = (direction: "left" | "right" | null) => {
     if (direction) {
-      // When voting, the question will be filtered out automatically
-      // Don't increment index - the next question slides into current position
       actionsRef.current.recordVote(direction);
       setSwipeProgress(0);
       setSwipeDirection(null);
@@ -546,7 +518,6 @@ export default function HomeScreen() {
       return;
     }
 
-    // Skipping (no vote) - need to manually advance index
     const currentQuestions = questionsRef.current;
     const currentIndex = displayIndexRef.current;
     const currentTab = selectedTabRef.current;
@@ -610,12 +581,10 @@ export default function HomeScreen() {
 
     if (!questionId) return;
 
-    // Remove from local vote tracking
     localVoteIdsRef.current.delete(questionId);
 
     const wasVotedBeforeSession = initiallyVotedIdsRef.current.has(questionId);
 
-    // Update the question in the full questions array (not filtered)
     setQuestionsByTab((prev) => {
       const tabQuestions = prev[currentTab] ?? [];
       const questionIndex = tabQuestions.findIndex((q) => q.id === questionId);
@@ -654,7 +623,6 @@ export default function HomeScreen() {
       ...prev,
       [currentTab]: (prev[currentTab] ?? []).slice(0, -1),
     }));
-    // Reset position for the restored question
     position.setValue({ x: 0, y: 0 });
     setSwipeProgress(0);
     setSwipeDirection(null);
@@ -662,8 +630,6 @@ export default function HomeScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
-  // Recreate panResponder when tab changes OR when question becomes available
-  // This ensures fresh gesture handlers when the card first renders after loading
   const hasQuestion = question !== null;
   const panResponder = React.useMemo(
     () =>
@@ -691,11 +657,9 @@ export default function HomeScreen() {
           actionsRef.current.resetCard();
         },
       }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [selectedTab, hasQuestion, loading],
   );
 
-  // Animate card entry when question changes (by ID or index)
   const questionId = question?.id;
   React.useEffect(() => {
     position.setValue({ x: 0, y: 0 });
@@ -732,7 +696,7 @@ export default function HomeScreen() {
     });
 
     return () => position.x.removeListener(listenerId);
-  }, [position.x, selectedTab, loading]); // Re-register listener on tab/loading change
+  }, [position.x, selectedTab, loading]);
 
   if (loading) {
     return (

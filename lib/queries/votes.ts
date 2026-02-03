@@ -231,7 +231,6 @@ export async function getTotalVotesOnUserQuestions(
   supabase: SupabaseClient,
   userId: string
 ): Promise<number> {
-  // First get all question IDs for this user
   const { data: questions, error: questionsError } = await supabase
     .from('questions')
     .select('id')
@@ -247,7 +246,6 @@ export async function getTotalVotesOnUserQuestions(
 
   const questionIds = questions.map((q) => q.id);
 
-  // Then count all votes on those questions
   const { count, error: votesError } = await supabase
     .from('votes')
     .select('*', { count: 'exact', head: true })
@@ -295,7 +293,6 @@ export async function getFriendVotesForQuestions(
     return new Map();
   }
 
-  // Get votes from friends for these questions
   const { data: votes, error: votesError } = await supabase
     .from('votes')
     .select('question_id, user_id, choice')
@@ -310,10 +307,8 @@ export async function getFriendVotesForQuestions(
     return new Map();
   }
 
-  // Get unique friend IDs who voted
   const voterIds = [...new Set(votes.map((v) => v.user_id))];
 
-  // Get profiles for these friends
   const { data: profiles, error: profilesError } = await supabase
     .from('profiles')
     .select('user_id, avatar_url')
@@ -323,13 +318,11 @@ export async function getFriendVotesForQuestions(
     throw profilesError;
   }
 
-  // Create avatar map
   const avatarMap = new Map<string, string | null>();
   for (const profile of profiles || []) {
     avatarMap.set(profile.user_id, profile.avatar_url);
   }
 
-  // Group votes by question
   const result = new Map<string, { left: FriendVote[]; right: FriendVote[] }>();
 
   for (const vote of votes) {

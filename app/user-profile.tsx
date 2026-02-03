@@ -49,7 +49,6 @@ import {
     View,
 } from "react-native";
 
-// Helper to convert DB question to display Question type
 function mapDbQuestionToQuestion(
   dbQuestion: DbQuestion,
   voteCounts: Map<string, { left: number; right: number }>,
@@ -101,11 +100,9 @@ export default function UserProfileScreen() {
   const { session } = useSession();
   const { user: currentUser } = useUser();
 
-  // Loading and error states
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Profile data
   const [profileUser, setProfileUser] = useState<User | null>(null);
   const [userStats, setUserStats] = useState({
     questionsCreated: 0,
@@ -136,7 +133,6 @@ export default function UserProfileScreen() {
     { questionIndex: number; direction: "left" | "right" }[]
   >([]);
 
-  // Supabase client for real-time
   const supabase = useMemo(() => {
     return session ? createClerkSupabaseClient(session) : null;
   }, [session]);
@@ -156,7 +152,6 @@ export default function UserProfileScreen() {
   const cardPosition = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const cardEntryScale = useRef(new Animated.Value(1)).current;
 
-  // Fetch profile data
   useEffect(() => {
     async function fetchProfileData() {
       if (!session) return;
@@ -167,11 +162,9 @@ export default function UserProfileScreen() {
       try {
         const supabase = createClerkSupabaseClient(session);
 
-        // Determine the target user ID
         let targetUserId = params.userId;
         let targetProfile = null;
 
-        // If we have a username but no userId, look up by username
         if (params.username && !params.userId) {
           targetProfile = await getProfileByUsername(supabase, params.username);
           if (targetProfile) {
@@ -187,13 +180,10 @@ export default function UserProfileScreen() {
           return;
         }
 
-        // Fetch user stats (questions count, followers count, following count)
         const stats = await getUserStats(supabase, targetUserId);
 
-        // Fetch votes cast by this user
         const votesCast = await getUserVotesCastCount(supabase, targetUserId);
 
-        // Fetch total engagement (votes received on their questions)
         const totalEngagement = await getTotalVotesOnUserQuestions(
           supabase,
           targetUserId,
@@ -207,7 +197,6 @@ export default function UserProfileScreen() {
           following: stats.following_count,
         });
 
-        // Set the profile user
         setProfileUser({
           id: targetUserId,
           username:
@@ -217,7 +206,6 @@ export default function UserProfileScreen() {
           avatarUrl: targetProfile.avatar_url || undefined,
         });
 
-        // Check if current user is following this user
         if (currentUser?.id && currentUser.id !== targetUserId) {
           const followStatus = await checkFollowStatus(
             supabase,
@@ -227,7 +215,6 @@ export default function UserProfileScreen() {
           setIsFollowing(followStatus);
         }
 
-        // Fetch user's questions
         const dbQuestions = await getQuestions(supabase, {
           userId: targetUserId,
           limit: 50,
@@ -254,7 +241,6 @@ export default function UserProfileScreen() {
           setUserQuestions([]);
         }
 
-        // Fetch followers and following with profiles
         const [followersData, followingData] = await Promise.all([
           getFollowersWithProfiles(supabase, targetUserId),
           getFollowingWithProfiles(supabase, targetUserId),
@@ -290,10 +276,9 @@ export default function UserProfileScreen() {
     fetchProfileData();
   }, [session, params.username, params.userId, currentUser?.id]);
 
-  // Handle follow/unfollow
   const handleFollowPress = useCallback(async () => {
     if (!session || !currentUser?.id || !profileUser?.id) return;
-    if (currentUser.id === profileUser.id) return; // Can't follow yourself
+    if (currentUser.id === profileUser.id) return;
 
     setIsFollowLoading(true);
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -338,18 +323,15 @@ export default function UserProfileScreen() {
     }
   }, [session, currentUser, profileUser?.id, isFollowing]);
 
-  // Get question IDs for real-time subscription
   const profileQuestionIds = useMemo(
     () => userQuestions.map((q) => q.id),
     [userQuestions],
   );
 
-  // Real-time: votes on this user's questions (updates engagement count and vote counts)
   const handleVoteReceived = useCallback(
     async (questionId: string, payload: any) => {
       if (!supabase) return;
 
-      // Update the vote count for this question
       const counts = await getVoteCounts(supabase, [questionId]);
       const newCounts = counts.get(questionId);
 
@@ -361,7 +343,6 @@ export default function UserProfileScreen() {
         );
       }
 
-      // Update engagement stat
       const isInsert = payload.eventType === "INSERT";
       const isDelete = payload.eventType === "DELETE";
 
@@ -386,7 +367,6 @@ export default function UserProfileScreen() {
     handleVoteReceived,
   );
 
-  // Real-time: follows for this user (updates follower/following counts)
   const handleFollowerChange = useCallback((isNewFollower: boolean) => {
     if (isPerformingFollowActionRef.current) return;
     setUserStats((prev) => ({
@@ -525,7 +505,6 @@ export default function UserProfileScreen() {
     if (profileUser) {
       return profileUser;
     }
-    // Fallback while loading
     return {
       id: params.userId || "loading",
       username: params.username || "Loading...",
@@ -736,7 +715,6 @@ export default function UserProfileScreen() {
     }
   }, [cardDisplayIndex, cardEntryScale, cardPosition, viewMode]);
 
-  // Loading state
   if (isLoading) {
     return (
       <View
@@ -755,7 +733,6 @@ export default function UserProfileScreen() {
     );
   }
 
-  // Error state
   if (error) {
     return (
       <View
@@ -817,7 +794,6 @@ export default function UserProfileScreen() {
       );
     }
 
-    // Check if this question should be in results mode (already voted or own question)
     const isResultsMode = question.hasVoted || question.isOwnQuestion;
 
     const currentVotes = question.votes ?? { left: 0, right: 0 };

@@ -11,7 +11,7 @@ export type FriendVoteInfo = {
 
 export type Question = {
   id: string;
-  visibleUserId?: string; // The creator's user ID (for checking if it's the user's own question)
+  visibleUserId?: string;
   title: string;
   prompt: string;
   promptImageUrl?: string;
@@ -26,13 +26,9 @@ export type Question = {
     createdBy?: string;
   };
   createdAt?: string;
-  /** Whether the current user has already voted on this question */
   hasVoted?: boolean;
-  /** The user's vote direction if they voted */
   userVote?: "left" | "right";
-  /** Whether this is the current user's own question */
   isOwnQuestion?: boolean;
-  /** Friends who voted on this question, by direction */
   friendVotes?: {
     left: FriendVoteInfo[];
     right: FriendVoteInfo[];

@@ -160,7 +160,6 @@ export async function updateQuestion(
   return question;
 }
 
-// Extended question type with algorithm scores
 export interface ScoredQuestion extends Question {
   total_votes: number;
   relevance_score?: number;
@@ -242,7 +241,6 @@ export async function getPopularCategories(
     throw error;
   }
 
-  // Count categories and sort by frequency
   const categoryCounts = new Map<string, number>();
   for (const row of data || []) {
     if (row.category) {

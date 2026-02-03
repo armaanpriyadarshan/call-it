@@ -102,7 +102,7 @@ const SWIPE_OUT_DISTANCE = 1.2 * SCREEN_W;
 const HORIZONTAL_ACTIVATION_DX = 8;
 const LEFT_EDGE_THRESHOLD = 50;
 const MAX_RECENT_SEARCHES = 10;
-const SEARCH_BAR_HEIGHT = 112; // paddingTop 60 + paddingBottom 12 + search bar ~40
+const SEARCH_BAR_HEIGHT = 112;
 const CATEGORIES_HEIGHT = 60;
 const HEADER_HEIGHT = SEARCH_BAR_HEIGHT + CATEGORIES_HEIGHT;
 
@@ -222,7 +222,6 @@ export default function ExploreScreen() {
 
         const questionIds = dbQuestions.map((q) => q.id);
 
-        // Get following IDs for friend votes
         const followingIds = currentUser
           ? await getFollowing(supabase, currentUser.id)
           : [];
@@ -319,7 +318,6 @@ export default function ExploreScreen() {
           profilesLimit: 10,
         });
 
-        // Map question results with vote counts and creator profiles
         const dbQuestions = results.questions.questions;
         if (dbQuestions.length > 0) {
           const questionIds = dbQuestions.map((q) => q.id);
@@ -506,7 +504,6 @@ export default function ExploreScreen() {
 
   React.useEffect(() => {
     if (user && hasFetchedRef.current) {
-      // Reset header position and display index when switching categories
       headerOffset.current = 0;
       lastScrollY.current = 0;
       scrollY.setValue(0);
@@ -515,7 +512,6 @@ export default function ExploreScreen() {
       setLoading(true);
       fetchQuestions();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedCategory]);
 
   const supabase = React.useMemo(() => {
@@ -567,23 +563,19 @@ export default function ExploreScreen() {
 
   useRealtimeVoteCounts(supabase, questionIds, refreshVoteCounts);
 
-  // Handle votes cast/removed from other screens (profile, home)
   const handleExternalVoteCast = React.useCallback(
     async (voteData: any) => {
       const questionId = voteData.question_id;
       const choice = voteData.choice as "left" | "right";
 
-      // Skip if this is a pending undo (local action)
       if (pendingUndoIdsRef.current.has(questionId)) return;
 
-      // Update the question's vote state
       setQuestions((prev) => {
         const idx = prev.findIndex((q) => q.id === questionId);
         if (idx === -1) return prev;
 
         const updated = [...prev];
         const q = updated[idx];
-        // Only update if not already marked as voted
         if (!q.hasVoted) {
           updated[idx] = {
             ...q,
@@ -601,13 +593,11 @@ export default function ExploreScreen() {
     async (voteData: any) => {
       const questionId = voteData.question_id;
 
-      // Skip if this is a pending undo (local action)
       if (pendingUndoIdsRef.current.has(questionId)) {
         pendingUndoIdsRef.current.delete(questionId);
         return;
       }
 
-      // Update the question's vote state
       setQuestions((prev) => {
         const idx = prev.findIndex((q) => q.id === questionId);
         if (idx === -1) return prev;
@@ -622,10 +612,8 @@ export default function ExploreScreen() {
         return updated;
       });
 
-      // Remove from initially voted set since the vote no longer exists
       initiallyVotedIdsRef.current.delete(questionId);
 
-      // Also remove from vote history if present
       setVoteHistory((prev) =>
         prev.filter((v) => v.questionId !== questionId),
       );
@@ -768,7 +756,6 @@ export default function ExploreScreen() {
   );
 
   const handleRefresh = React.useCallback(() => {
-    // Reset header position when refreshing
     headerOffset.current = 0;
     lastScrollY.current = 0;
     scrollY.setValue(0);
@@ -781,29 +768,24 @@ export default function ExploreScreen() {
       const diff = currentY - lastScrollY.current;
       lastScrollY.current = currentY;
 
-      // Determine scroll direction
       if (diff > 0) {
         scrollDirection.current = 'down';
       } else if (diff < 0) {
         scrollDirection.current = 'up';
       }
 
-      // Calculate new header offset based on scroll
       if (scrollDirection.current === 'down') {
-        // Scrolling down - increase offset (hide header)
         headerOffset.current = Math.min(
           headerOffset.current + diff,
           HEADER_HEIGHT
         );
       } else {
-        // Scrolling up - decrease offset (show header)
         headerOffset.current = Math.max(
           headerOffset.current + diff,
           0
         );
       }
 
-      // Ensure we're fully visible at top
       if (currentY <= 0) {
         headerOffset.current = 0;
       }
@@ -888,7 +870,6 @@ export default function ExploreScreen() {
 
     if (!currentUser || !currentQuestion) return;
 
-    // Skip if already voted (before or during this session) or if it's the user's own question
     if (currentQuestion.hasVoted || currentQuestion.isOwnQuestion) return;
 
     setQuestions((prev) => {
@@ -1906,9 +1887,6 @@ export default function ExploreScreen() {
     );
   }
 
-  // Interpolate scroll position for separate header sections
-  // Categories collapse first (0 to CATEGORIES_HEIGHT), then search bar (CATEGORIES_HEIGHT to HEADER_HEIGHT)
-  // Categories must also move when search bar moves, so total movement is -CATEGORIES_HEIGHT + -SEARCH_BAR_HEIGHT
   const categoriesTranslateY = performedSearch ? 0 : scrollY.interpolate({
     inputRange: [0, CATEGORIES_HEIGHT, HEADER_HEIGHT],
     outputRange: [0, -CATEGORIES_HEIGHT, -CATEGORIES_HEIGHT - SEARCH_BAR_HEIGHT],
@@ -1921,7 +1899,6 @@ export default function ExploreScreen() {
     extrapolate: 'clamp',
   });
 
-  // Show search bar border when categories have collapsed
   const searchBarBorderOpacity = performedSearch ? 1 : scrollY.interpolate({
     inputRange: [CATEGORIES_HEIGHT - 10, CATEGORIES_HEIGHT],
     outputRange: [0, 1],
@@ -1930,7 +1907,6 @@ export default function ExploreScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: "black" }}>
-      {/* Animated Search Bar */}
       <Animated.View
         style={{
           position: "absolute",
@@ -1958,7 +1934,6 @@ export default function ExploreScreen() {
             onSubmitEditing={handleSearchSubmit}
           />
         </View>
-        {/* Animated border that appears when categories collapse */}
         <Animated.View
           style={{
             position: "absolute",
@@ -1972,7 +1947,6 @@ export default function ExploreScreen() {
         />
       </Animated.View>
 
-      {/* Animated Categories Row */}
       {!performedSearch && (
         <Animated.View
           style={{
@@ -2121,7 +2095,6 @@ export default function ExploreScreen() {
               contentContainerStyle={{ paddingBottom: 24 }}
               showsVerticalScrollIndicator={false}
             >
-              {/* All tab - show both questions and users */}
               {activeSearchTab === "all" && (
                 <>
                   {searchResults.questions.length > 0 && (
@@ -2216,7 +2189,6 @@ export default function ExploreScreen() {
                 </>
               )}
 
-              {/* Questions tab */}
               {activeSearchTab === "questions" && (
                 <View style={{ paddingHorizontal: 16, paddingTop: 16 }}>
                   {searchResults.questions.length > 0 ? (
@@ -2266,7 +2238,6 @@ export default function ExploreScreen() {
                 </View>
               )}
 
-              {/* Users tab */}
               {activeSearchTab === "users" && (
                 <View style={{ paddingTop: 8 }}>
                   {searchResults.users.length > 0 ? (
