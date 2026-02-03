@@ -155,7 +155,7 @@ export default function HomeScreen() {
   const selectedTabRef = React.useRef(selectedTab);
   selectedTabRef.current = selectedTab;
 
-  // Reset swipe state when switching tabs
+  // Reset swipe state when switching tabs or when loading completes
   React.useEffect(() => {
     // Stop any running animations before resetting
     position.stopAnimation();
@@ -165,7 +165,7 @@ export default function HomeScreen() {
     setSwipeProgress(0);
     setSwipeDirection(null);
     setCardOpacity(1);
-  }, [selectedTab, position, entryScale]);
+  }, [selectedTab, loading, position, entryScale]);
 
   // Clamp displayIndex if it goes out of bounds (e.g., after voting on last question)
   React.useEffect(() => {
@@ -692,7 +692,7 @@ export default function HomeScreen() {
         },
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selectedTab, hasQuestion],
+    [selectedTab, hasQuestion, loading],
   );
 
   // Animate card entry when question changes (by ID or index)
@@ -732,7 +732,7 @@ export default function HomeScreen() {
     });
 
     return () => position.x.removeListener(listenerId);
-  }, [position.x, selectedTab]); // Re-register listener on tab change
+  }, [position.x, selectedTab, loading]); // Re-register listener on tab/loading change
 
   if (loading) {
     return (
