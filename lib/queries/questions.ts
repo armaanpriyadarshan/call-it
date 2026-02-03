@@ -222,3 +222,37 @@ export async function getUserCategoryPreferences(
 
   return data || [];
 }
+
+export interface CategoryWithCount {
+  category: string;
+  count: number;
+}
+
+export async function getPopularCategories(
+  supabase: SupabaseClient,
+  options?: { limit?: number }
+): Promise<CategoryWithCount[]> {
+  const { data, error } = await supabase
+    .from("questions")
+    .select("category")
+    .not("category", "is", null)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    throw error;
+  }
+
+  // Count categories and sort by frequency
+  const categoryCounts = new Map<string, number>();
+  for (const row of data || []) {
+    if (row.category) {
+      categoryCounts.set(row.category, (categoryCounts.get(row.category) || 0) + 1);
+    }
+  }
+
+  const sorted = Array.from(categoryCounts.entries())
+    .map(([category, count]) => ({ category, count }))
+    .sort((a, b) => b.count - a.count);
+
+  return sorted.slice(0, options?.limit ?? 10);
+}

@@ -7,7 +7,6 @@ import {
 } from "@/components/search";
 import { UserListItem } from "@/components/users";
 import { ActionButton, ChoiceOption } from "@/components/voting";
-import { SUGGESTED_CATEGORIES } from "@/constants/categories";
 import { useExploreTabReset } from "@/contexts/explore-tab-context";
 import {
   useRealtimeQuestions,
@@ -15,7 +14,7 @@ import {
   useRealtimeVoteCounts,
 } from "@/lib/hooks/useRealtime";
 import { getProfile, Profile } from "@/lib/queries/profiles";
-import { Question as DbQuestion, getQuestions } from "@/lib/queries/questions";
+import { Question as DbQuestion, getQuestions, getPopularCategories, CategoryWithCount } from "@/lib/queries/questions";
 import {
   autocompleteSearch,
   AutocompleteSuggestion,
@@ -143,10 +142,12 @@ export default function ExploreScreen() {
   const [usersOffset, setUsersOffset] = React.useState(0);
   const [questions, setQuestions] = React.useState<Question[]>([]);
   const [loading, setLoading] = React.useState(true);
+  const [categories, setCategories] = React.useState<CategoryWithCount[]>([]);
   const [refreshing, setRefreshing] = React.useState(false);
   const [viewMode, setViewMode] = React.useState<"list" | "card">("list");
   const [selectedCategory, setSelectedCategory] = React.useState<string | null>(null);
   const [displayIndex, setDisplayIndex] = React.useState(0);
+  const [cardKey, setCardKey] = React.useState(0);
   const question = questions[displayIndex] ?? null;
   const [swipeProgress, setSwipeProgress] = React.useState(0);
   const [swipeDirection, setSwipeDirection] = React.useState<
@@ -281,6 +282,16 @@ export default function ExploreScreen() {
     },
     [getSupabase, selectedCategory],
   );
+
+  const fetchCategories = React.useCallback(async () => {
+    try {
+      const supabase = getSupabase();
+      const popularCategories = await getPopularCategories(supabase, { limit: 12 });
+      setCategories(popularCategories);
+    } catch (err) {
+      console.error("Failed to fetch categories:", err);
+    }
+  }, [getSupabase]);
 
   const mapProfileToUser = React.useCallback((profile: Profile): User => {
     return {
@@ -490,14 +501,17 @@ export default function ExploreScreen() {
     if (!user || hasFetchedRef.current) return;
     hasFetchedRef.current = true;
     fetchQuestions();
-  }, [user, fetchQuestions]);
+    fetchCategories();
+  }, [user, fetchQuestions, fetchCategories]);
 
   React.useEffect(() => {
     if (user && hasFetchedRef.current) {
-      // Reset header position when switching categories
+      // Reset header position and display index when switching categories
       headerOffset.current = 0;
       lastScrollY.current = 0;
       scrollY.setValue(0);
+      setDisplayIndex(0);
+      setCardKey(0);
       setLoading(true);
       fetchQuestions();
     }
@@ -968,6 +982,7 @@ export default function ExploreScreen() {
     setSwipeDirection(null);
     setCardOpacity(0);
     setDisplayIndex(nextIdx);
+    setCardKey((k) => k + 1);
   };
 
   actionsRef.current.forceSwipe = (direction: "left" | "right") => {
@@ -1278,7 +1293,7 @@ export default function ExploreScreen() {
         }).start();
       });
     }
-  }, [displayIndex, entryScale, viewMode, position]);
+  }, [displayIndex, cardKey, entryScale, viewMode, position]);
 
   React.useEffect(() => {
     if (viewMode !== "card") return;
@@ -1363,6 +1378,42 @@ export default function ExploreScreen() {
   }, [registerResetCallback, unregisterResetCallback, resetToRoot]);
 
   if (viewMode === "card") {
+    if (loading) {
+      return (
+        <View
+          style={{
+            flex: 1,
+            backgroundColor: "black",
+            padding: 24,
+          }}
+        >
+          <View
+            style={{
+              position: "absolute",
+              bottom: 16,
+              left: 24,
+              zIndex: 10,
+            }}
+          >
+            <ActionButton
+              onPress={handleBackToList}
+              icon='arrow-left'
+              label='Back'
+            />
+          </View>
+          <View
+            style={{
+              flex: 1,
+              justifyContent: "center",
+              alignItems: "center",
+            }}
+          >
+            <ActivityIndicator size="large" color="white" />
+          </View>
+        </View>
+      );
+    }
+
     if (!question) {
       return (
         <View
@@ -1370,16 +1421,59 @@ export default function ExploreScreen() {
             flex: 1,
             backgroundColor: "black",
             padding: 24,
-            justifyContent: "center",
-            alignItems: "center",
           }}
         >
-          <Text style={{ color: "white", fontSize: 18 }}>
-            No questions available
-          </Text>
-          <Text style={{ color: "#aaa", fontSize: 14, marginTop: 8 }}>
-            Check back later!
-          </Text>
+          <View
+            style={{
+              position: "absolute",
+              bottom: 16,
+              left: 24,
+              zIndex: 10,
+            }}
+          >
+            <ActionButton
+              onPress={handleBackToList}
+              icon='arrow-left'
+              label='Back'
+            />
+          </View>
+          <View
+            style={{
+              flex: 1,
+              justifyContent: "center",
+              alignItems: "center",
+            }}
+          >
+            <Text style={{ color: "white", fontSize: 18, textAlign: "center" }}>
+              {selectedCategory
+                ? `No more questions in ${selectedCategory}`
+                : "No questions available"}
+            </Text>
+            <Text style={{ color: "#aaa", fontSize: 14, marginTop: 8, textAlign: "center" }}>
+              {selectedCategory
+                ? "Try another category or check back later!"
+                : "Check back later!"}
+            </Text>
+            {selectedCategory && (
+              <Pressable
+                onPress={() => {
+                  setSelectedCategory(null);
+                  handleBackToList();
+                }}
+                style={{
+                  marginTop: 20,
+                  paddingHorizontal: 20,
+                  paddingVertical: 12,
+                  backgroundColor: "#222",
+                  borderRadius: 8,
+                }}
+              >
+                <Text style={{ color: "white", fontSize: 14 }}>
+                  Browse all categories
+                </Text>
+              </Pressable>
+            )}
+          </View>
         </View>
       );
     }
@@ -1932,28 +2026,39 @@ export default function ExploreScreen() {
                   All
                 </Text>
               </Pressable>
-              {SUGGESTED_CATEGORIES.map((category) => (
+              {categories.map((cat) => (
                 <Pressable
-                  key={category}
-                  onPress={() => setSelectedCategory(category)}
+                  key={cat.category}
+                  onPress={() => setSelectedCategory(cat.category)}
                   style={{
                     height: 36,
                     paddingHorizontal: 16,
                     borderRadius: 18,
                     borderWidth: 1,
-                    backgroundColor: selectedCategory === category ? "white" : "transparent",
-                    borderColor: selectedCategory === category ? "white" : "#333",
+                    backgroundColor: selectedCategory === cat.category ? "white" : "transparent",
+                    borderColor: selectedCategory === cat.category ? "white" : "#333",
                     justifyContent: "center",
+                    flexDirection: "row",
+                    alignItems: "center",
+                    gap: 6,
                   }}
                 >
                   <Text
                     style={{
-                      color: selectedCategory === category ? "black" : "#aaa",
+                      color: selectedCategory === cat.category ? "black" : "#aaa",
                       fontSize: 14,
                       fontWeight: "500",
                     }}
                   >
-                    {category}
+                    {cat.category}
+                  </Text>
+                  <Text
+                    style={{
+                      color: selectedCategory === cat.category ? "rgba(0,0,0,0.5)" : "#666",
+                      fontSize: 12,
+                    }}
+                  >
+                    {cat.count}
                   </Text>
                 </Pressable>
               ))}
