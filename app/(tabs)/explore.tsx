@@ -888,10 +888,8 @@ export default function ExploreScreen() {
 
     if (!currentUser || !currentQuestion) return;
 
-    const wasVotedBeforeSession = initiallyVotedIdsRef.current.has(
-      currentQuestion.id,
-    );
-    if (wasVotedBeforeSession || currentQuestion.isOwnQuestion) return;
+    // Skip if already voted (before or during this session) or if it's the user's own question
+    if (currentQuestion.hasVoted || currentQuestion.isOwnQuestion) return;
 
     setQuestions((prev) => {
       const updated = [...prev];
