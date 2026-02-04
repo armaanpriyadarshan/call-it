@@ -110,6 +110,7 @@ export default function HomeScreen() {
 
   const [flowState, setFlowState] = React.useState<VotingFlowState>("viewing");
   const [votedDirection, setVotedDirection] = React.useState<"left" | "right" | null>(null);
+  const [isTimerPaused, setIsTimerPaused] = React.useState(false);
 
   const contentOpacity = React.useRef(new Animated.Value(1)).current;
   const contentScale = React.useRef(new Animated.Value(1)).current;
@@ -143,6 +144,7 @@ export default function HomeScreen() {
   const localVoteIdsRef = React.useRef<Set<string>>(new Set());
   const sessionInteractedIdsRef = React.useRef<Set<string>>(new Set());
   const flowStateRef = React.useRef(flowState);
+  const pressStartTimeRef = React.useRef<number>(0);
 
   questionsRef.current = filteredQuestions;
   displayIndexRef.current = displayIndex;
@@ -184,15 +186,68 @@ export default function HomeScreen() {
     rightBarWidth.setValue(0);
     setFlowState("viewing");
     setVotedDirection(null);
-  }, [selectedTab, loading, position, contentOpacity, contentScale, leftBarWidth, rightBarWidth]);
+    setIsTimerPaused(false);
 
-  React.useEffect(() => {
-    if (filteredQuestions.length > 0 && displayIndex >= filteredQuestions.length) {
-      setDisplayIndices((prev) => ({ ...prev, [selectedTab]: 0 }));
+    // When switching tabs, check if we need to skip the current question
+    // This handles the case where a question was voted on in another tab
+    if (prevTab !== selectedTab) {
+      const newTabQuestions = questionsByTabRef.current[selectedTab] ?? [];
+      const newTabFilteredQuestions = selectedTab === 2
+        ? newTabQuestions.filter((q) => friendsVotedQuestionIds.has(q.id))
+        : newTabQuestions;
+      const newTabIndex = displayIndicesRef.current[selectedTab] ?? 0;
+
+      const currentQ = newTabFilteredQuestions[newTabIndex];
+      if (currentQ && currentQ.hasVoted && !currentQ.isOwnQuestion && !sessionInteractedIdsRef.current.has(currentQ.id)) {
+        // Find next unvoted question
+        let foundUnvoted = false;
+        for (let i = 1; i < newTabFilteredQuestions.length; i++) {
+          const idx = (newTabIndex + i) % newTabFilteredQuestions.length;
+          const q = newTabFilteredQuestions[idx];
+          if (!q.hasVoted || q.isOwnQuestion) {
+            setDisplayIndices((prev) => ({ ...prev, [selectedTab]: idx }));
+            foundUnvoted = true;
+            break;
+          }
+        }
+        // If no unvoted question found, set index out of bounds to show empty state
+        if (!foundUnvoted) {
+          setDisplayIndices((prev) => ({ ...prev, [selectedTab]: newTabFilteredQuestions.length }));
+        }
+      }
     }
-  }, [filteredQuestions.length, displayIndex, selectedTab]);
+  }, [selectedTab, loading, position, contentOpacity, contentScale, leftBarWidth, rightBarWidth, friendsVotedQuestionIds]);
 
-  // Skip past already-voted questions (unless interacted with in this session)
+  // Helper function to find next unvoted question index
+  const findNextUnvotedIndex = React.useCallback((questions: Question[], currentIndex: number): number | null => {
+    if (questions.length === 0) return null;
+
+    const currentQuestion = questions[currentIndex];
+    if (!currentQuestion) return null;
+
+    // If current question is not voted or is own question, no skip needed
+    if (!currentQuestion.hasVoted || currentQuestion.isOwnQuestion) {
+      return null;
+    }
+
+    // If this question was interacted with in this session, don't auto-skip
+    if (sessionInteractedIdsRef.current.has(currentQuestion.id)) {
+      return null;
+    }
+
+    // Search forward for an unvoted question or own question
+    for (let i = 1; i < questions.length; i++) {
+      const idx = (currentIndex + i) % questions.length;
+      const q = questions[idx];
+      if (!q.hasVoted || q.isOwnQuestion) {
+        return idx;
+      }
+    }
+
+    return null; // All questions are voted
+  }, []);
+
+  // Skip past already-voted questions (own questions show in results mode)
   React.useEffect(() => {
     if (filteredQuestions.length === 0) return;
     if (flowState !== "viewing") return;
@@ -200,29 +255,18 @@ export default function HomeScreen() {
     const currentQuestion = filteredQuestions[displayIndex];
     if (!currentQuestion) return;
 
-    // If this question was voted on (but not interacted with this session), find the next unvoted question
-    const wasInteractedThisSession = sessionInteractedIdsRef.current.has(currentQuestion.id);
-    if (currentQuestion.hasVoted && !wasInteractedThisSession && !currentQuestion.isOwnQuestion) {
-      let nextIdx = displayIndex;
-      let found = false;
-
-      // Search forward for an unvoted question or one we've interacted with
-      for (let i = 0; i < filteredQuestions.length; i++) {
-        const idx = (displayIndex + i) % filteredQuestions.length;
-        const q = filteredQuestions[idx];
-        const qInteracted = sessionInteractedIdsRef.current.has(q.id);
-        if (!q.hasVoted || qInteracted || q.isOwnQuestion) {
-          nextIdx = idx;
-          found = true;
-          break;
-        }
-      }
-
-      if (found && nextIdx !== displayIndex) {
+    // Check if current question needs to be skipped
+    if (currentQuestion.hasVoted && !currentQuestion.isOwnQuestion && !sessionInteractedIdsRef.current.has(currentQuestion.id)) {
+      const nextIdx = findNextUnvotedIndex(filteredQuestions, displayIndex);
+      if (nextIdx !== null && nextIdx !== displayIndex) {
+        // Found an unvoted question, skip to it
         setDisplayIndices((prev) => ({ ...prev, [selectedTab]: nextIdx }));
+      } else {
+        // All questions are voted, set index out of bounds to show empty state
+        setDisplayIndices((prev) => ({ ...prev, [selectedTab]: filteredQuestions.length }));
       }
     }
-  }, [filteredQuestions, displayIndex, selectedTab, flowState]);
+  }, [filteredQuestions, displayIndex, selectedTab, flowState, findNextUnvotedIndex]);
 
   const getSupabase = () => {
     if (!supabaseRef.current) {
@@ -301,7 +345,7 @@ export default function HomeScreen() {
 
       initiallyVotedIdsRef.current = new Set();
       localVoteIdsRef.current = new Set();
-      sessionInteractedIdsRef.current = new Set();
+      // Note: Don't reset sessionInteractedIdsRef here - it should persist across tabs
 
       const mappedQuestions = eligibleQuestions.map((dbQ) => {
         const scoredQ = dbQ as ScoredQuestion;
@@ -359,6 +403,7 @@ export default function HomeScreen() {
     rightBarWidth.setValue(0);
     setFlowState("viewing");
     setVotedDirection(null);
+    setIsTimerPaused(false);
     fetchQuestionsForTab(0);
     return true;
   }, [fetchQuestionsForTab, position, contentOpacity, contentScale, leftBarWidth, rightBarWidth]);
@@ -480,23 +525,30 @@ export default function HomeScreen() {
     const questionId = currentQuestion.id;
 
     localVoteIdsRef.current.add(questionId);
-    sessionInteractedIdsRef.current.add(questionId);
+    // Note: Don't add to sessionInteractedIdsRef here - we want voted questions
+    // to be skipped when switching to other tabs where the same question exists
 
     setQuestionsByTab((prev) => {
-      const tabQuestions = prev[currentTab] ?? [];
-      const updated = tabQuestions.map((q) => {
-        if (q.id === questionId) {
+      const updated = { ...prev };
+      // Update the question in ALL tabs, not just current
+      for (const tabKey of Object.keys(updated)) {
+        const tab = Number(tabKey);
+        const tabQuestions = updated[tab] ?? [];
+        const index = tabQuestions.findIndex((q) => q.id === questionId);
+        if (index !== -1) {
+          const newTabQuestions = [...tabQuestions];
+          const q = newTabQuestions[index];
           const votes = q.votes ?? { left: 0, right: 0 };
-          return {
+          newTabQuestions[index] = {
             ...q,
             votes: { ...votes, [direction]: votes[direction] + 1 },
             hasVoted: true,
             userVote: direction,
           };
+          updated[tab] = newTabQuestions;
         }
-        return q;
-      });
-      return { ...prev, [currentTab]: updated };
+      }
+      return updated;
     });
 
     setVoteHistories((prev) => ({
@@ -522,28 +574,37 @@ export default function HomeScreen() {
       };
 
       setQuestionsByTab((prev) => {
-        const tabQuestions = prev[currentTab] ?? [];
-        const updated = tabQuestions.map((q) => {
-          if (q.id === questionId) {
-            return {
-              ...q,
+        const updated = { ...prev };
+        for (const tabKey of Object.keys(updated)) {
+          const tab = Number(tabKey);
+          const tabQuestions = updated[tab] ?? [];
+          const index = tabQuestions.findIndex((q) => q.id === questionId);
+          if (index !== -1) {
+            const newTabQuestions = [...tabQuestions];
+            newTabQuestions[index] = {
+              ...newTabQuestions[index],
               votes: newCounts,
               hasVoted: true,
               userVote: direction,
             };
+            updated[tab] = newTabQuestions;
           }
-          return q;
-        });
-        return { ...prev, [currentTab]: updated };
+        }
+        return updated;
       });
     } catch (err) {
       console.error("Failed to record vote:", err);
       setQuestionsByTab((prev) => {
-        const tabQuestions = prev[currentTab] ?? [];
-        const updated = tabQuestions.map((q) => {
-          if (q.id === questionId) {
+        const updated = { ...prev };
+        for (const tabKey of Object.keys(updated)) {
+          const tab = Number(tabKey);
+          const tabQuestions = updated[tab] ?? [];
+          const index = tabQuestions.findIndex((q) => q.id === questionId);
+          if (index !== -1) {
+            const newTabQuestions = [...tabQuestions];
+            const q = newTabQuestions[index];
             const votes = q.votes ?? { left: 0, right: 0 };
-            return {
+            newTabQuestions[index] = {
               ...q,
               votes: {
                 ...votes,
@@ -552,10 +613,10 @@ export default function HomeScreen() {
               hasVoted: false,
               userVote: undefined,
             };
+            updated[tab] = newTabQuestions;
           }
-          return q;
-        });
-        return { ...prev, [currentTab]: updated };
+        }
+        return updated;
       });
       setVoteHistories((prev) => ({
         ...prev,
@@ -572,19 +633,42 @@ export default function HomeScreen() {
     if (currentQuestions.length === 0) {
       setFlowState("viewing");
       setVotedDirection(null);
+    setIsTimerPaused(false);
       leftBarWidth.setValue(0);
       rightBarWidth.setValue(0);
       position.setValue({ x: 0, y: 0 });
       return;
     }
 
-    const nextIdx = currentIndex + 1 >= currentQuestions.length ? 0 : currentIndex + 1;
+    // Find the next unvoted question (or own question which shows in results mode)
+    let nextIdx: number | null = null;
+    for (let i = 1; i <= currentQuestions.length; i++) {
+      const idx = (currentIndex + i) % currentQuestions.length;
+      const q = currentQuestions[idx];
+      if (!q.hasVoted || q.isOwnQuestion) {
+        nextIdx = idx;
+        break;
+      }
+    }
+
+    // If no unvoted question found, set index out of bounds to show empty state
+    if (nextIdx === null) {
+      setFlowState("viewing");
+      setVotedDirection(null);
+    setIsTimerPaused(false);
+      leftBarWidth.setValue(0);
+      rightBarWidth.setValue(0);
+      position.setValue({ x: 0, y: 0 });
+      setDisplayIndices((prev) => ({ ...prev, [currentTab]: currentQuestions.length }));
+      return;
+    }
 
     contentOpacity.setValue(0);
     position.setValue({ x: 0, y: 0 });
     leftBarWidth.setValue(0);
     rightBarWidth.setValue(0);
     setVotedDirection(null);
+    setIsTimerPaused(false);
     contentScale.setValue(0.97);
     setFlowState("transitioning");
     setDisplayIndices((prev) => ({ ...prev, [currentTab]: nextIdx }));
@@ -627,6 +711,7 @@ export default function HomeScreen() {
     leftBarWidth.setValue(0);
     rightBarWidth.setValue(0);
     setVotedDirection(null);
+    setIsTimerPaused(false);
     contentScale.setValue(0.97);
 
     // Always mark the previous question as interacted so it won't be skipped
@@ -641,11 +726,16 @@ export default function HomeScreen() {
       localVoteIdsRef.current.delete(questionId);
 
       setQuestionsByTab((prev) => {
-        const tabQuestions = prev[currentTab] ?? [];
-        const updated = tabQuestions.map((q) => {
-          if (q.id === questionId && direction) {
+        const updated = { ...prev };
+        for (const tabKey of Object.keys(updated)) {
+          const tab = Number(tabKey);
+          const tabQuestions = updated[tab] ?? [];
+          const index = tabQuestions.findIndex((q) => q.id === questionId);
+          if (index !== -1 && direction) {
+            const newTabQuestions = [...tabQuestions];
+            const q = newTabQuestions[index];
             const votes = q.votes ?? { left: 0, right: 0 };
-            return {
+            newTabQuestions[index] = {
               ...q,
               votes: {
                 ...votes,
@@ -654,10 +744,10 @@ export default function HomeScreen() {
               hasVoted: false,
               userVote: undefined,
             };
+            updated[tab] = newTabQuestions;
           }
-          return q;
-        });
-        return { ...prev, [currentTab]: updated };
+        }
+        return updated;
       });
 
       setVoteHistories((prev) => {
@@ -713,11 +803,16 @@ export default function HomeScreen() {
     sessionInteractedIdsRef.current.add(questionId);
 
     setQuestionsByTab((prev) => {
-      const tabQuestions = prev[currentTab] ?? [];
-      const updated = tabQuestions.map((q) => {
-        if (q.id === questionId) {
+      const updated = { ...prev };
+      for (const tabKey of Object.keys(updated)) {
+        const tab = Number(tabKey);
+        const tabQuestions = updated[tab] ?? [];
+        const index = tabQuestions.findIndex((q) => q.id === questionId);
+        if (index !== -1) {
+          const newTabQuestions = [...tabQuestions];
+          const q = newTabQuestions[index];
           const votes = q.votes ?? { left: 0, right: 0 };
-          return {
+          newTabQuestions[index] = {
             ...q,
             votes: {
               ...votes,
@@ -726,10 +821,10 @@ export default function HomeScreen() {
             hasVoted: false,
             userVote: undefined,
           };
+          updated[tab] = newTabQuestions;
         }
-        return q;
-      });
-      return { ...prev, [currentTab]: updated };
+      }
+      return updated;
     });
 
     setVoteHistories((prev) => {
@@ -749,6 +844,7 @@ export default function HomeScreen() {
 
     setFlowState("viewing");
     setVotedDirection(null);
+    setIsTimerPaused(false);
     leftBarWidth.setValue(0);
     rightBarWidth.setValue(0);
 
@@ -820,7 +916,6 @@ export default function HomeScreen() {
     }
   };
 
-  const hasQuestion = question !== null;
   const panResponder = React.useMemo(
     () =>
       PanResponder.create({
@@ -870,7 +965,7 @@ export default function HomeScreen() {
           }).start();
         },
       }),
-    [selectedTab, hasQuestion, loading, position],
+    [position],
   );
 
   const handleTimerComplete = React.useCallback(() => {
@@ -998,11 +1093,31 @@ export default function HomeScreen() {
         >
           <Pressable
             style={{ flex: 1 }}
-            onPress={() => actionsRef.current.handleTapZone("left")}
+            onPress={() => {
+              const pressDuration = Date.now() - pressStartTimeRef.current;
+              if (pressDuration < 150) {
+                actionsRef.current.handleTapZone("left");
+              }
+            }}
+            onPressIn={() => {
+              pressStartTimeRef.current = Date.now();
+              setIsTimerPaused(true);
+            }}
+            onPressOut={() => setIsTimerPaused(false)}
           />
           <Pressable
             style={{ flex: 1 }}
-            onPress={() => actionsRef.current.handleTapZone("right")}
+            onPress={() => {
+              const pressDuration = Date.now() - pressStartTimeRef.current;
+              if (pressDuration < 150) {
+                actionsRef.current.handleTapZone("right");
+              }
+            }}
+            onPressIn={() => {
+              pressStartTimeRef.current = Date.now();
+              setIsTimerPaused(true);
+            }}
+            onPressOut={() => setIsTimerPaused(false)}
           />
         </View>
       )}
@@ -1139,6 +1254,7 @@ export default function HomeScreen() {
               <ProgressBar
                 duration={TIMER_DURATION}
                 isRunning={isTimerRunning}
+                isPaused={isTimerPaused}
                 onComplete={handleTimerComplete}
               />
             </View>
