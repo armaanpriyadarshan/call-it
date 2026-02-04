@@ -13,14 +13,15 @@ import {
   useRealtimeUserVotes,
   useRealtimeVoteCounts,
 } from "@/lib/hooks/useRealtime";
+import { getFollowing } from "@/lib/queries/follows";
 import { getProfile, Profile } from "@/lib/queries/profiles";
-import { Question as DbQuestion, getQuestions, getPopularCategories, CategoryWithCount } from "@/lib/queries/questions";
+import { CategoryWithCount, Question as DbQuestion, getPopularCategories, getQuestions } from "@/lib/queries/questions";
 import {
   autocompleteSearch,
   AutocompleteSuggestion,
   searchAll,
-  searchQuestions,
   searchProfiles,
+  searchQuestions,
 } from "@/lib/queries/search";
 import {
   createVote,
@@ -29,7 +30,6 @@ import {
   getUserVotes,
   getVoteCounts,
 } from "@/lib/queries/votes";
-import { getFollowing } from "@/lib/queries/follows";
 import { createClerkSupabaseClient } from "@/lib/supabase";
 import type { Question, User, VoteHistoryItem } from "@/types";
 import { calculateVoteData } from "@/utils/voting";
@@ -148,7 +148,24 @@ export default function ExploreScreen() {
   const [selectedCategory, setSelectedCategory] = React.useState<string | null>(null);
   const [displayIndex, setDisplayIndex] = React.useState(0);
   const [cardKey, setCardKey] = React.useState(0);
-  const question = questions[displayIndex] ?? null;
+  const [undoneCardOverride, setUndoneCardOverride] = React.useState<{
+    questionId: string;
+    hasVoted: false;
+    userVote: undefined;
+    votes: { left: number; right: number };
+  } | null>(null);
+  const baseQuestion = questions[displayIndex] ?? null;
+  const question =
+    baseQuestion &&
+    undoneCardOverride &&
+    undoneCardOverride.questionId === baseQuestion.id
+      ? {
+          ...baseQuestion,
+          hasVoted: undoneCardOverride.hasVoted,
+          userVote: undoneCardOverride.userVote,
+          votes: undoneCardOverride.votes,
+        }
+      : baseQuestion;
   const [swipeProgress, setSwipeProgress] = React.useState(0);
   const [swipeDirection, setSwipeDirection] = React.useState<
     "left" | "right" | null
@@ -183,7 +200,7 @@ export default function ExploreScreen() {
   const displayIndexRef = React.useRef(displayIndex);
   const voteHistoryRef = React.useRef(voteHistory);
   const initiallyVotedIdsRef = React.useRef<Set<string>>(new Set());
-  const pendingUndoIdsRef = React.useRef<Set<string>>(new Set());
+  const undoneQuestionIdRef = React.useRef<string | null>(null);
 
   getTokenRef.current = getToken;
   userRef.current = user;
@@ -204,7 +221,8 @@ export default function ExploreScreen() {
     async (isRefresh = false) => {
       if (isRefresh) {
         setRefreshing(true);
-        pendingUndoIdsRef.current.clear();
+        undoneQuestionIdRef.current = null;
+        setUndoneCardOverride(null);
       }
 
       try {
@@ -253,7 +271,8 @@ export default function ExploreScreen() {
         });
 
         initiallyVotedIdsRef.current = new Set(userVotesMap.keys());
-        pendingUndoIdsRef.current.clear();
+        undoneQuestionIdRef.current = null;
+        setUndoneCardOverride(null);
 
         const mappedQuestions = dbQuestions.map((dbQ) => {
           const votes = voteCounts.get(dbQ.id) ?? { left: 0, right: 0 };
@@ -541,14 +560,12 @@ export default function ExploreScreen() {
         const idx = updated.findIndex((q) => q.id === questionId);
         if (idx !== -1) {
           const question = updated[idx];
-          const isPendingUndo = pendingUndoIdsRef.current.has(questionId);
+          const isPendingUndo = undoneQuestionIdRef.current === questionId;
           updated[idx] = {
             ...question,
             votes: newCounts,
-            hasVoted: isPendingUndo
-              ? question.hasVoted
-              : userVote !== undefined,
-            userVote: isPendingUndo ? question.userVote : userVote,
+            hasVoted: isPendingUndo ? false : userVote !== undefined,
+            userVote: isPendingUndo ? undefined : userVote,
           };
         }
         return updated;
@@ -568,7 +585,7 @@ export default function ExploreScreen() {
       const questionId = voteData.question_id;
       const choice = voteData.choice as "left" | "right";
 
-      if (pendingUndoIdsRef.current.has(questionId)) return;
+      if (undoneQuestionIdRef.current === questionId) return;
 
       setQuestions((prev) => {
         const idx = prev.findIndex((q) => q.id === questionId);
@@ -593,8 +610,9 @@ export default function ExploreScreen() {
     async (voteData: any) => {
       const questionId = voteData.question_id;
 
-      if (pendingUndoIdsRef.current.has(questionId)) {
-        pendingUndoIdsRef.current.delete(questionId);
+      if (undoneQuestionIdRef.current === questionId) {
+        undoneQuestionIdRef.current = null;
+        setUndoneCardOverride(null);
         return;
       }
 
@@ -721,7 +739,8 @@ export default function ExploreScreen() {
     const currentUser = userRef.current;
     if (!currentUser || questions.length === 0) return;
 
-    pendingUndoIdsRef.current.clear();
+    undoneQuestionIdRef.current = null;
+    setUndoneCardOverride(null);
 
     const supabase = getSupabase();
     const ids = questions.map((q) => q.id);
@@ -837,6 +856,8 @@ export default function ExploreScreen() {
   const handleBackToList = React.useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setViewMode("list");
+    undoneQuestionIdRef.current = null;
+    setUndoneCardOverride(null);
     setSwipeProgress(0);
     setSwipeDirection(null);
     position.setValue({ x: 0, y: 0 });
@@ -909,7 +930,7 @@ export default function ExploreScreen() {
       };
 
       setQuestions((prev) => {
-        if (pendingUndoIdsRef.current.has(currentQuestion.id)) {
+        if (undoneQuestionIdRef.current === currentQuestion.id) {
           return prev;
         }
         const updated = [...prev];
@@ -994,10 +1015,25 @@ export default function ExploreScreen() {
     const lastVote = history[history.length - 1];
     const previousIndex = lastVote.questionIndex!;
     const questionId = lastVote.questionId;
+    if (!questionId) return;
 
     const wasVotedBeforeSession = Boolean(
-      questionId && initiallyVotedIdsRef.current.has(questionId),
+      initiallyVotedIdsRef.current.has(questionId),
     );
+
+    const prevQuestions = questionsRef.current;
+    const prevQ = prevQuestions[previousIndex];
+    const prevVotes = prevQ?.votes ?? { left: 0, right: 0 };
+    const undoneVotes = {
+      ...prevVotes,
+      [lastVote.direction]: Math.max(0, prevVotes[lastVote.direction] - 1),
+    };
+    setUndoneCardOverride({
+      questionId,
+      hasVoted: false,
+      userVote: undefined,
+      votes: undoneVotes,
+    });
 
     setQuestions((prev) => {
       const updated = [...prev];
@@ -1018,11 +1054,19 @@ export default function ExploreScreen() {
     });
 
     if (questionId && !wasVotedBeforeSession) {
-      pendingUndoIdsRef.current.add(questionId);
+      undoneQuestionIdRef.current = questionId;
       const supabase = getSupabase();
-      deleteVote(supabase, questionId, currentUser.id).catch((err) => {
-        console.error("Failed to delete vote:", err);
-      });
+      deleteVote(supabase, questionId, currentUser.id)
+        .then(() => {
+          refreshVoteCounts(questionId);
+          undoneQuestionIdRef.current = null;
+          setUndoneCardOverride(null);
+        })
+        .catch((err) => {
+          console.error("Failed to delete vote:", err);
+          undoneQuestionIdRef.current = null;
+          setUndoneCardOverride(null);
+        });
     }
 
     setVoteHistory((prev) => prev.slice(0, -1));
