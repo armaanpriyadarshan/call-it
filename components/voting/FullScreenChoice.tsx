@@ -7,6 +7,8 @@ interface FullScreenChoiceProps {
   choice: Choice;
   direction: "left" | "right";
   onPress: () => void;
+  onPressIn?: () => void;
+  onPressOut?: () => void;
   disabled: boolean;
   showResults: boolean;
   percentage: number;
@@ -20,6 +22,8 @@ export const FullScreenChoice: React.FC<FullScreenChoiceProps> = ({
   choice,
   direction,
   onPress,
+  onPressIn,
+  onPressOut,
   disabled,
   showResults,
   percentage,
@@ -31,6 +35,7 @@ export const FullScreenChoice: React.FC<FullScreenChoiceProps> = ({
   const scaleAnim = React.useRef(new Animated.Value(1)).current;
 
   const handlePressIn = () => {
+    onPressIn?.();
     if (!disabled) {
       Animated.spring(scaleAnim, {
         toValue: 0.97,
@@ -41,6 +46,7 @@ export const FullScreenChoice: React.FC<FullScreenChoiceProps> = ({
   };
 
   const handlePressOut = () => {
+    onPressOut?.();
     Animated.spring(scaleAnim, {
       toValue: 1,
       useNativeDriver: true,

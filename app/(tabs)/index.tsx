@@ -145,6 +145,8 @@ export default function HomeScreen() {
   const sessionInteractedIdsRef = React.useRef<Set<string>>(new Set());
   const flowStateRef = React.useRef(flowState);
   const pressStartTimeRef = React.useRef<number>(0);
+  const choicesLayoutRef = React.useRef<{ y: number; height: number } | null>(null);
+  const lastUndoTimeRef = React.useRef<number>(0);
 
   questionsRef.current = filteredQuestions;
   displayIndexRef.current = displayIndex;
@@ -698,8 +700,25 @@ export default function HomeScreen() {
     const currentTab = selectedTabRef.current;
     const currentUser = userRef.current;
 
-    if (currentQuestions.length === 0 || currentIndex === 0) {
+    if (currentQuestions.length === 0) {
       position.setValue({ x: 0, y: 0 });
+      return;
+    }
+
+    // If on first question, refresh the feed
+    if (currentIndex === 0) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      contentOpacity.setValue(0);
+      position.setValue({ x: 0, y: 0 });
+      leftBarWidth.setValue(0);
+      rightBarWidth.setValue(0);
+      setVotedDirection(null);
+      setIsTimerPaused(false);
+      setFlowState("viewing");
+      setDisplayIndices((prev) => ({ ...prev, [currentTab]: 0 }));
+      localVoteIdsRef.current = new Set();
+      sessionInteractedIdsRef.current = new Set();
+      fetchQuestionsForTab(currentTab);
       return;
     }
 
@@ -847,11 +866,14 @@ export default function HomeScreen() {
     setIsTimerPaused(false);
     leftBarWidth.setValue(0);
     rightBarWidth.setValue(0);
+    lastUndoTimeRef.current = Date.now();
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
   actionsRef.current.handleChoiceTap = (direction: "left" | "right") => {
+    // Don't allow voting immediately after an undo (prevent accidental double-tap)
+    if (Date.now() - lastUndoTimeRef.current < 300) return;
     const currentState = flowStateRef.current;
     const currentQuestions = questionsRef.current;
     const currentIndex = displayIndexRef.current;
@@ -1079,52 +1101,34 @@ export default function HomeScreen() {
     <View style={{ flex: 1, backgroundColor: "black" }}>
       {renderHeader()}
 
-      {flowState === "voted" && (
-        <View
-          style={{
-            position: "absolute",
-            bottom: 0,
-            left: 0,
-            right: 0,
-            top: insets.top + 60,
-            flexDirection: "row",
-            zIndex: 15,
-          }}
-        >
-          <Pressable
-            style={{ flex: 1 }}
-            onPress={() => {
-              const pressDuration = Date.now() - pressStartTimeRef.current;
-              if (pressDuration < 150) {
-                actionsRef.current.handleTapZone("left");
-              }
-            }}
-            onPressIn={() => {
-              pressStartTimeRef.current = Date.now();
-              setIsTimerPaused(true);
-            }}
-            onPressOut={() => setIsTimerPaused(false)}
-          />
-          <Pressable
-            style={{ flex: 1 }}
-            onPress={() => {
-              const pressDuration = Date.now() - pressStartTimeRef.current;
-              if (pressDuration < 150) {
-                actionsRef.current.handleTapZone("right");
-              }
-            }}
-            onPressIn={() => {
-              pressStartTimeRef.current = Date.now();
-              setIsTimerPaused(true);
-            }}
-            onPressOut={() => setIsTimerPaused(false)}
-          />
-        </View>
-      )}
 
 
       <Animated.View
         {...panResponder.panHandlers}
+        onTouchStart={() => {
+          if (flowState === "voted") {
+            pressStartTimeRef.current = Date.now();
+            setIsTimerPaused(true);
+          }
+        }}
+        onTouchEnd={(e) => {
+          if (flowState === "voted") {
+            setIsTimerPaused(false);
+            const pressDuration = Date.now() - pressStartTimeRef.current;
+            const touchX = e.nativeEvent.pageX;
+            const touchY = e.nativeEvent.pageY;
+            const layout = choicesLayoutRef.current;
+            const isOnChoices = layout && touchY >= layout.y && touchY <= layout.y + layout.height;
+
+            if (pressDuration < 150 && !isOnChoices) {
+              if (touchX > SCREEN_W / 2) {
+                actionsRef.current.handleTapZone("right");
+              } else {
+                actionsRef.current.undoCurrentQuestion();
+              }
+            }
+          }
+        }}
         style={{
           flex: 1,
           justifyContent: "center",
@@ -1226,12 +1230,39 @@ export default function HomeScreen() {
             </Text>
           )}
 
-          <View style={{ gap: 12, marginTop: 8 }}>
+          <View
+            style={{ gap: 12, marginTop: 8 }}
+            onLayout={(e) => {
+              e.target.measure((_x, _y, _width, height, _pageX, pageY) => {
+                choicesLayoutRef.current = { y: pageY, height };
+              });
+            }}
+          >
             <FullScreenChoice
               choice={question.left}
               direction="left"
-              onPress={() => actionsRef.current.handleChoiceTap("left")}
-              disabled={!canTapChoices}
+              onPress={() => {
+                if (flowState === "voted") {
+                  const pressDuration = Date.now() - pressStartTimeRef.current;
+                  if (pressDuration < 150) {
+                    actionsRef.current.undoCurrentQuestion();
+                  }
+                } else {
+                  actionsRef.current.handleChoiceTap("left");
+                }
+              }}
+              onPressIn={() => {
+                if (flowState === "voted") {
+                  pressStartTimeRef.current = Date.now();
+                  setIsTimerPaused(true);
+                }
+              }}
+              onPressOut={() => {
+                if (flowState === "voted") {
+                  setIsTimerPaused(false);
+                }
+              }}
+              disabled={!canTapChoices && flowState !== "voted"}
               showResults={showResults}
               percentage={showResults ? percentages.left : 0}
               votes={currentVotes.left}
@@ -1242,8 +1273,28 @@ export default function HomeScreen() {
             <FullScreenChoice
               choice={question.right}
               direction="right"
-              onPress={() => actionsRef.current.handleChoiceTap("right")}
-              disabled={!canTapChoices}
+              onPress={() => {
+                if (flowState === "voted") {
+                  const pressDuration = Date.now() - pressStartTimeRef.current;
+                  if (pressDuration < 150) {
+                    actionsRef.current.undoCurrentQuestion();
+                  }
+                } else {
+                  actionsRef.current.handleChoiceTap("right");
+                }
+              }}
+              onPressIn={() => {
+                if (flowState === "voted") {
+                  pressStartTimeRef.current = Date.now();
+                  setIsTimerPaused(true);
+                }
+              }}
+              onPressOut={() => {
+                if (flowState === "voted") {
+                  setIsTimerPaused(false);
+                }
+              }}
+              disabled={!canTapChoices && flowState !== "voted"}
               showResults={showResults}
               percentage={showResults ? percentages.right : 0}
               votes={currentVotes.right}
