@@ -4,19 +4,19 @@ import { useRealtimeVoteCounts } from "@/lib/hooks/useRealtime";
 import { getFollowing } from "@/lib/queries/follows";
 import { getProfile } from "@/lib/queries/profiles";
 import {
-    Question as DbQuestion,
-    getForYouQuestions,
-    getQuestions,
-    getTrendingQuestions,
-    ScoredQuestion,
+  Question as DbQuestion,
+  getForYouQuestions,
+  getQuestions,
+  getTrendingQuestions,
+  ScoredQuestion,
 } from "@/lib/queries/questions";
 import {
-    createVote,
-    deleteVote,
-    getFriendVotesForQuestions,
-    getQuestionIdsVotedByUsers,
-    getUserVotes,
-    getVoteCounts,
+  createVote,
+  deleteVote,
+  getFriendVotesForQuestions,
+  getQuestionIdsVotedByUsers,
+  getUserVotes,
+  getVoteCounts,
 } from "@/lib/queries/votes";
 import { createClerkSupabaseClient } from "@/lib/supabase";
 import type { Question, VoteHistoryItem, VotingFlowState } from "@/types";
@@ -27,14 +27,14 @@ import * as Haptics from "expo-haptics";
 import { useFocusEffect, useRouter } from "expo-router";
 import React from "react";
 import {
-    ActivityIndicator,
-    Animated,
-    Dimensions,
-    Image,
-    PanResponder,
-    Pressable,
-    Text,
-    View,
+  ActivityIndicator,
+  Animated,
+  Dimensions,
+  Image,
+  PanResponder,
+  Pressable,
+  Text,
+  View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -1129,6 +1129,7 @@ export default function HomeScreen() {
           flex: 1,
           justifyContent: "center",
           paddingHorizontal: 24,
+          paddingTop: insets.top + 20,
           opacity: contentOpacity,
           transform: [
             { translateX: position.x },
