@@ -200,7 +200,7 @@ export default function ExploreScreen() {
   const displayIndexRef = React.useRef(displayIndex);
   const voteHistoryRef = React.useRef(voteHistory);
   const initiallyVotedIdsRef = React.useRef<Set<string>>(new Set());
-  const undoneQuestionIdRef = React.useRef<string | null>(null);
+  const pendingUndoIdsRef = React.useRef<Set<string>>(new Set());
 
   getTokenRef.current = getToken;
   userRef.current = user;
@@ -221,8 +221,7 @@ export default function ExploreScreen() {
     async (isRefresh = false) => {
       if (isRefresh) {
         setRefreshing(true);
-        undoneQuestionIdRef.current = null;
-        setUndoneCardOverride(null);
+        pendingUndoIdsRef.current.clear();
       }
 
       try {
@@ -271,8 +270,7 @@ export default function ExploreScreen() {
         });
 
         initiallyVotedIdsRef.current = new Set(userVotesMap.keys());
-        undoneQuestionIdRef.current = null;
-        setUndoneCardOverride(null);
+        pendingUndoIdsRef.current.clear();
 
         const mappedQuestions = dbQuestions.map((dbQ) => {
           const votes = voteCounts.get(dbQ.id) ?? { left: 0, right: 0 };
@@ -560,7 +558,7 @@ export default function ExploreScreen() {
         const idx = updated.findIndex((q) => q.id === questionId);
         if (idx !== -1) {
           const question = updated[idx];
-          const isPendingUndo = undoneQuestionIdRef.current === questionId;
+          const isPendingUndo = pendingUndoIdsRef.current.has(questionId);
           updated[idx] = {
             ...question,
             votes: newCounts,
@@ -585,7 +583,7 @@ export default function ExploreScreen() {
       const questionId = voteData.question_id;
       const choice = voteData.choice as "left" | "right";
 
-      if (undoneQuestionIdRef.current === questionId) return;
+      if (pendingUndoIdsRef.current.has(questionId)) return;
 
       setQuestions((prev) => {
         const idx = prev.findIndex((q) => q.id === questionId);
@@ -610,9 +608,8 @@ export default function ExploreScreen() {
     async (voteData: any) => {
       const questionId = voteData.question_id;
 
-      if (undoneQuestionIdRef.current === questionId) {
-        undoneQuestionIdRef.current = null;
-        setUndoneCardOverride(null);
+      if (pendingUndoIdsRef.current.has(questionId)) {
+        pendingUndoIdsRef.current.delete(questionId);
         return;
       }
 
@@ -739,8 +736,7 @@ export default function ExploreScreen() {
     const currentUser = userRef.current;
     if (!currentUser || questions.length === 0) return;
 
-    undoneQuestionIdRef.current = null;
-    setUndoneCardOverride(null);
+    pendingUndoIdsRef.current.clear();
 
     const supabase = getSupabase();
     const ids = questions.map((q) => q.id);
@@ -856,7 +852,6 @@ export default function ExploreScreen() {
   const handleBackToList = React.useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setViewMode("list");
-    undoneQuestionIdRef.current = null;
     setUndoneCardOverride(null);
     setSwipeProgress(0);
     setSwipeDirection(null);
@@ -930,7 +925,7 @@ export default function ExploreScreen() {
       };
 
       setQuestions((prev) => {
-        if (undoneQuestionIdRef.current === currentQuestion.id) {
+        if (pendingUndoIdsRef.current.has(currentQuestion.id)) {
           return prev;
         }
         const updated = [...prev];
@@ -1054,18 +1049,16 @@ export default function ExploreScreen() {
     });
 
     if (questionId && !wasVotedBeforeSession) {
-      undoneQuestionIdRef.current = questionId;
+      pendingUndoIdsRef.current.add(questionId);
       const supabase = getSupabase();
       deleteVote(supabase, questionId, currentUser.id)
         .then(() => {
           refreshVoteCounts(questionId);
-          undoneQuestionIdRef.current = null;
-          setUndoneCardOverride(null);
+          pendingUndoIdsRef.current.delete(questionId);
         })
         .catch((err) => {
           console.error("Failed to delete vote:", err);
-          undoneQuestionIdRef.current = null;
-          setUndoneCardOverride(null);
+          pendingUndoIdsRef.current.delete(questionId);
         });
     }
 
