@@ -59,3 +59,10 @@ export type ImageInfo = {
   width?: number;
   height?: number;
 };
+
+export type VotingFlowState =
+  | "viewing"
+  | "voting"
+  | "revealing"
+  | "voted"
+  | "transitioning";
