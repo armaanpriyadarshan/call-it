@@ -9,7 +9,7 @@ import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
-// Keep splash screen visible while we check auth, and prevent auto
+// Keep splash screen visible while we 
 SplashScreen.preventAutoHideAsync();
 
 function RootLayoutNav() {
