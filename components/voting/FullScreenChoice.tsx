@@ -34,6 +34,13 @@ export const FullScreenChoice: React.FC<FullScreenChoiceProps> = ({
 }) => {
   const scaleAnim = React.useRef(new Animated.Value(1)).current;
 
+  // Derive opacity from animatedWidth so text fades in with the bar
+  const resultsOpacity = animatedWidth.interpolate({
+    inputRange: [0, 15, 100],
+    outputRange: [0, 1, 1],
+    extrapolate: "clamp",
+  });
+
   const handlePressIn = () => {
     onPressIn?.();
     if (!disabled) {
@@ -118,12 +125,13 @@ export const FullScreenChoice: React.FC<FullScreenChoiceProps> = ({
                 {choice.label}
               </Text>
               {showResults && (
-                <View
+                <Animated.View
                   style={{
                     flexDirection: "row",
                     alignItems: "center",
                     marginTop: 4,
                     gap: 8,
+                    opacity: resultsOpacity,
                   }}
                 >
                   <Text
@@ -150,7 +158,7 @@ export const FullScreenChoice: React.FC<FullScreenChoiceProps> = ({
                       position="left"
                     />
                   )}
-                </View>
+                </Animated.View>
               )}
             </View>
           </View>

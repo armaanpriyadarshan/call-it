@@ -889,33 +889,31 @@ export default function HomeScreen() {
 
     actionsRef.current.recordVote(direction);
 
-    setTimeout(() => {
-      setFlowState("revealing");
+    // Start reveal immediately for seamless animation
+    setFlowState("revealing");
 
-      const votes = currentQuestion.votes ?? { left: 0, right: 0 };
-      const newVotes = {
-        left: direction === "left" ? votes.left + 1 : votes.left,
-        right: direction === "right" ? votes.right + 1 : votes.right,
-      };
-      const total = newVotes.left + newVotes.right;
-      const percentages = getNormalizedPercentages(newVotes.left, newVotes.right, total);
+    const votes = currentQuestion.votes ?? { left: 0, right: 0 };
+    const newVotes = {
+      left: direction === "left" ? votes.left + 1 : votes.left,
+      right: direction === "right" ? votes.right + 1 : votes.right,
+    };
+    const total = newVotes.left + newVotes.right;
+    const percentages = getNormalizedPercentages(newVotes.left, newVotes.right, total);
 
-      Animated.parallel([
-        Animated.timing(leftBarWidth, {
-          toValue: percentages.left,
-          duration: REVEAL_DURATION,
-          useNativeDriver: false,
-        }),
-        Animated.timing(rightBarWidth, {
-          toValue: percentages.right,
-          duration: REVEAL_DURATION,
-          delay: 100,
-          useNativeDriver: false,
-        }),
-      ]).start(() => {
-        setFlowState("voted");
-      });
-    }, 100);
+    Animated.parallel([
+      Animated.timing(leftBarWidth, {
+        toValue: percentages.left,
+        duration: REVEAL_DURATION,
+        useNativeDriver: false,
+      }),
+      Animated.timing(rightBarWidth, {
+        toValue: percentages.right,
+        duration: REVEAL_DURATION,
+        useNativeDriver: false,
+      }),
+    ]).start(() => {
+      setFlowState("voted");
+    });
   };
 
   actionsRef.current.handleTimerComplete = () => {
@@ -943,7 +941,12 @@ export default function HomeScreen() {
       PanResponder.create({
         onStartShouldSetPanResponder: () => false,
         onMoveShouldSetPanResponder: (_, gesture) => {
-          if (flowStateRef.current !== "viewing") return false;
+          // Allow swiping during "viewing" and after voting (hasVoted becomes true instantly)
+          const currentQuestion = questionsRef.current[displayIndexRef.current];
+          const canSwipe = flowStateRef.current === "viewing" ||
+            flowStateRef.current === "voted" ||
+            !!currentQuestion?.hasVoted;
+          if (!canSwipe) return false;
           const dx = Math.abs(gesture.dx);
           const dy = Math.abs(gesture.dy);
           if (dy > dx) return false;
@@ -1096,6 +1099,8 @@ export default function HomeScreen() {
   const showResults = flowState === "revealing" || flowState === "voted" || isResultsMode === true;
   const isTimerRunning = flowState === "voted" && !isResultsMode;
   const canTapChoices = flowState === "viewing" && !isResultsMode;
+  // Allow instant skip after voting (hasVoted becomes true immediately via optimistic update)
+  const canSkipOrUndo = flowState === "voted" || !!question?.hasVoted;
 
   return (
     <View style={{ flex: 1, backgroundColor: "black" }}>
@@ -1106,13 +1111,13 @@ export default function HomeScreen() {
       <Animated.View
         {...panResponder.panHandlers}
         onTouchStart={() => {
-          if (flowState === "voted") {
+          if (canSkipOrUndo) {
             pressStartTimeRef.current = Date.now();
             setIsTimerPaused(true);
           }
         }}
         onTouchEnd={(e) => {
-          if (flowState === "voted") {
+          if (canSkipOrUndo) {
             setIsTimerPaused(false);
             const pressDuration = Date.now() - pressStartTimeRef.current;
             const touchX = e.nativeEvent.pageX;
@@ -1242,7 +1247,7 @@ export default function HomeScreen() {
               choice={question.left}
               direction="left"
               onPress={() => {
-                if (flowState === "voted") {
+                if (canSkipOrUndo) {
                   const pressDuration = Date.now() - pressStartTimeRef.current;
                   if (pressDuration < 150) {
                     actionsRef.current.undoCurrentQuestion();
@@ -1252,17 +1257,17 @@ export default function HomeScreen() {
                 }
               }}
               onPressIn={() => {
-                if (flowState === "voted") {
+                if (canSkipOrUndo) {
                   pressStartTimeRef.current = Date.now();
                   setIsTimerPaused(true);
                 }
               }}
               onPressOut={() => {
-                if (flowState === "voted") {
+                if (canSkipOrUndo) {
                   setIsTimerPaused(false);
                 }
               }}
-              disabled={!canTapChoices && flowState !== "voted"}
+              disabled={!canTapChoices && !canSkipOrUndo}
               showResults={showResults}
               percentage={showResults ? percentages.left : 0}
               votes={currentVotes.left}
@@ -1274,7 +1279,7 @@ export default function HomeScreen() {
               choice={question.right}
               direction="right"
               onPress={() => {
-                if (flowState === "voted") {
+                if (canSkipOrUndo) {
                   const pressDuration = Date.now() - pressStartTimeRef.current;
                   if (pressDuration < 150) {
                     actionsRef.current.undoCurrentQuestion();
@@ -1284,17 +1289,17 @@ export default function HomeScreen() {
                 }
               }}
               onPressIn={() => {
-                if (flowState === "voted") {
+                if (canSkipOrUndo) {
                   pressStartTimeRef.current = Date.now();
                   setIsTimerPaused(true);
                 }
               }}
               onPressOut={() => {
-                if (flowState === "voted") {
+                if (canSkipOrUndo) {
                   setIsTimerPaused(false);
                 }
               }}
-              disabled={!canTapChoices && flowState !== "voted"}
+              disabled={!canTapChoices && !canSkipOrUndo}
               showResults={showResults}
               percentage={showResults ? percentages.right : 0}
               votes={currentVotes.right}

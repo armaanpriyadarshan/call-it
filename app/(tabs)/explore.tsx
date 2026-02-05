@@ -1217,32 +1217,31 @@ export default function ExploreScreen() {
 
     actionsRef.current.recordVote(direction);
 
-    setTimeout(() => {
-      setFlowState("revealing");
+    // Start reveal immediately for seamless animation
+    setFlowState("revealing");
 
-      const votes = currentQuestion.votes ?? { left: 0, right: 0 };
-      const newVotes = {
-        left: direction === "left" ? votes.left + 1 : votes.left,
-        right: direction === "right" ? votes.right + 1 : votes.right,
-      };
-      const total = newVotes.left + newVotes.right;
-      const percentages = getNormalizedPercentages(newVotes.left, newVotes.right, total);
+    const votes = currentQuestion.votes ?? { left: 0, right: 0 };
+    const newVotes = {
+      left: direction === "left" ? votes.left + 1 : votes.left,
+      right: direction === "right" ? votes.right + 1 : votes.right,
+    };
+    const total = newVotes.left + newVotes.right;
+    const percentages = getNormalizedPercentages(newVotes.left, newVotes.right, total);
 
-      Animated.parallel([
-        Animated.timing(leftBarWidth, {
-          toValue: percentages.left,
-          duration: REVEAL_DURATION,
-          useNativeDriver: false,
-        }),
-        Animated.timing(rightBarWidth, {
-          toValue: percentages.right,
-          duration: REVEAL_DURATION,
-          useNativeDriver: false,
-        }),
-      ]).start(() => {
-        setFlowState("voted");
-      });
-    }, 100);
+    Animated.parallel([
+      Animated.timing(leftBarWidth, {
+        toValue: percentages.left,
+        duration: REVEAL_DURATION,
+        useNativeDriver: false,
+      }),
+      Animated.timing(rightBarWidth, {
+        toValue: percentages.right,
+        duration: REVEAL_DURATION,
+        useNativeDriver: false,
+      }),
+    ]).start(() => {
+      setFlowState("voted");
+    });
   };
 
   actionsRef.current.handleTimerComplete = () => {
@@ -1417,6 +1416,8 @@ export default function ExploreScreen() {
 
   React.useEffect(() => {
     if (viewMode !== "card" || !baseQuestion) return;
+    // Don't interfere with ongoing vote animation
+    if (flowState === "voting" || flowState === "revealing") return;
     const wasVotedBefore = initiallyVotedIdsRef.current.has(baseQuestion.id);
     const isAlreadyVoted = wasVotedBefore || baseQuestion.isOwnQuestion;
     const justVoted = flowState === "voted" && baseQuestion.hasVoted;
@@ -2229,16 +2230,12 @@ export default function ExploreScreen() {
   }
 
   const categoriesTranslateY = performedSearch ? 0 : scrollY.interpolate({
-    inputRange: [0, CATEGORIES_HEIGHT, HEADER_HEIGHT],
-    outputRange: [0, -CATEGORIES_HEIGHT, -CATEGORIES_HEIGHT - SEARCH_BAR_HEIGHT],
+    inputRange: [0, CATEGORIES_HEIGHT],
+    outputRange: [0, -CATEGORIES_HEIGHT],
     extrapolate: 'clamp',
   });
 
-  const searchBarTranslateY = performedSearch ? 0 : scrollY.interpolate({
-    inputRange: [CATEGORIES_HEIGHT, HEADER_HEIGHT],
-    outputRange: [0, -SEARCH_BAR_HEIGHT],
-    extrapolate: 'clamp',
-  });
+  const searchBarTranslateY = 0;
 
   const searchBarBorderOpacity = performedSearch ? 1 : scrollY.interpolate({
     inputRange: [CATEGORIES_HEIGHT - 10, CATEGORIES_HEIGHT],
