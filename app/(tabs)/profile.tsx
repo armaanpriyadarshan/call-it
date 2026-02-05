@@ -1,3 +1,4 @@
+import { FullScreenChoice } from "@/components/voting";
 import { SUGGESTED_CATEGORIES } from "@/constants/categories";
 import { useProfileTabReset } from "@/contexts/profile-tab-context";
 import {
@@ -29,7 +30,6 @@ import {
 } from "@/lib/queries/votes";
 import { createClerkSupabaseClient } from "@/lib/supabase";
 import type { ImageInfo, Question, User, VoteHistoryItem } from "@/types";
-import { FullScreenChoice } from "@/components/voting";
 import { formatDate } from "@/utils/date";
 import { getNormalizedPercentages } from "@/utils/voting";
 import { useAuth, useSession, useUser } from "@clerk/clerk-expo";
@@ -60,6 +60,7 @@ import {
     TextInput,
     View,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const COLORS = {
   background: "#1c1c1c",
@@ -979,6 +980,7 @@ export default function ProfileScreen() {
   const { session } = useSession();
   const { user: clerkUser } = useUser();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const {
     registerResetCallback,
     unregisterResetCallback,
@@ -1045,7 +1047,6 @@ export default function ProfileScreen() {
   const [editRightImage, setEditRightImage] = useState<ImageInfo | null>(null);
   const [viewMode, setViewMode] = useState<"list" | "card">("list");
   const [cardDisplayIndex, setCardDisplayIndex] = useState(0);
-  const [cardOpacity, setCardOpacity] = useState(1);
   const [profileView, setProfileView] = useState<
     "profile" | "followers" | "following"
   >("profile");
@@ -1053,6 +1054,9 @@ export default function ProfileScreen() {
 
   const cardPosition = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const cardEntryScale = useRef(new Animated.Value(1)).current;
+  const cardOpacity = useRef(new Animated.Value(1)).current;
+  const cardDisplayIndexRef = useRef(cardDisplayIndex);
+  cardDisplayIndexRef.current = cardDisplayIndex;
   // Static animated values for results display
   const leftBarWidth = useRef(new Animated.Value(0)).current;
   const rightBarWidth = useRef(new Animated.Value(0)).current;
@@ -1704,17 +1708,26 @@ export default function ProfileScreen() {
       setCardDisplayIndex(foundIndex);
       setViewMode("card");
       cardPosition.setValue({ x: 0, y: 0 });
-      setCardOpacity(1);
+      cardOpacity.setValue(1);
       cardEntryScale.setValue(1);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
   };
 
-  const handleBackToList = useCallback(() => {
+  const handleBackToList = useCallback((options?: { skipPositionReset?: boolean }) => {
+    const skipPositionReset = options?.skipPositionReset ?? false;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setViewMode("list");
-    cardPosition.setValue({ x: 0, y: 0 });
-  }, [cardPosition]);
+    setProfileView("profile");
+    // Ensure profile view is visible when returning to list
+    profileViewOpacity.setValue(1);
+    profileViewTranslateY.setValue(0);
+    followersFollowingOpacity.setValue(0);
+    if (!skipPositionReset) {
+      cardPosition.setValue({ x: 0, y: 0 });
+      cardOpacity.setValue(1);
+    }
+  }, [cardPosition, cardOpacity, profileViewOpacity, profileViewTranslateY, followersFollowingOpacity]);
 
   const resetToRoot = useCallback(() => {
     if (profileView !== "profile") {
@@ -1870,47 +1883,75 @@ export default function ProfileScreen() {
   }, [activeTab, myQuestions, votedQuestions]);
 
   const navigateCard = useCallback(
-    (direction: "left" | "right") => {
+    (direction: "left" | "right", shouldGoBackToList?: boolean) => {
       const questions = getQuestionsForTab();
-      const isFirst = cardDisplayIndex === 0;
-      const isLast = cardDisplayIndex === questions.length - 1;
+      const currentIndex = cardDisplayIndexRef.current;
+      const isFirst = currentIndex === 0;
+      const isLast = currentIndex === questions.length - 1;
 
       if (
         (direction === "right" && isFirst) ||
         (direction === "left" && isLast)
       ) {
-        resetCard();
+        if (shouldGoBackToList) {
+          handleBackToList({ skipPositionReset: true });
+        } else {
+          resetCard();
+        }
         return;
       }
 
       const nextIdx =
         direction === "left"
-          ? (cardDisplayIndex + 1) % questions.length
-          : cardDisplayIndex === 0
+          ? (currentIndex + 1) % questions.length
+          : currentIndex === 0
             ? questions.length - 1
-            : cardDisplayIndex - 1;
+            : currentIndex - 1;
 
-      setCardOpacity(0);
+      cardOpacity.setValue(0);
       setCardDisplayIndex(nextIdx);
     },
-    [cardDisplayIndex, getQuestionsForTab, resetCard],
+    [getQuestionsForTab, resetCard, handleBackToList, cardOpacity],
   );
 
   const forceSwipe = useCallback(
     (direction: "left" | "right") => {
+      const questions = getQuestionsForTab();
+      const currentIndex = cardDisplayIndexRef.current;
+      const isFirst = currentIndex === 0;
+      const isLast = currentIndex === questions.length - 1;
+      const isGoingBackToList =
+        (direction === "right" && isFirst) || (direction === "left" && isLast);
+
       const x =
         direction === "right" ? SWIPE_OUT_DISTANCE : -SWIPE_OUT_DISTANCE;
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-      Animated.timing(cardPosition, {
-        toValue: { x, y: 0 },
-        duration: ANIMATION_DURATION,
-        useNativeDriver: false,
-      }).start(() => {
-        navigateCard(direction);
+      // Animate card off screen, with fade if going back to list
+      const animations: Animated.CompositeAnimation[] = [
+        Animated.timing(cardPosition, {
+          toValue: { x, y: 0 },
+          duration: ANIMATION_DURATION,
+          useNativeDriver: false,
+        }),
+      ];
+
+      if (isGoingBackToList) {
+        // Fade out when going back to list for smoother transition
+        animations.push(
+          Animated.timing(cardOpacity, {
+            toValue: 0,
+            duration: ANIMATION_DURATION,
+            useNativeDriver: false,
+          }),
+        );
+      }
+
+      Animated.parallel(animations).start(() => {
+        navigateCard(direction, isGoingBackToList);
       });
     },
-    [cardPosition, navigateCard],
+    [cardPosition, cardOpacity, navigateCard, getQuestionsForTab],
   );
 
   const cardPanResponder = useMemo(
@@ -1946,9 +1987,9 @@ export default function ProfileScreen() {
     if (viewMode === "card") {
       cardPosition.setValue({ x: 0, y: 0 });
       cardEntryScale.setValue(0.98);
-      setCardOpacity(0);
+      cardOpacity.setValue(0);
       requestAnimationFrame(() => {
-        setCardOpacity(1);
+        cardOpacity.setValue(1);
         Animated.timing(cardEntryScale, {
           toValue: 1,
           duration: ANIMATION_DURATION,
@@ -1957,22 +1998,22 @@ export default function ProfileScreen() {
         }).start();
       });
     }
-  }, [cardDisplayIndex, cardEntryScale, cardPosition, viewMode]);
+  }, [cardDisplayIndex, cardEntryScale, cardPosition, cardOpacity, viewMode]);
 
   useEffect(() => {
     const listenerId = cardPosition.x.addListener(({ value }) => {
       const absDx = Math.abs(value);
       if (absDx >= SWIPE_OUT_DISTANCE * 0.8) {
-        setCardOpacity(0);
+        cardOpacity.setValue(0);
       } else if (absDx < SWIPE_OUT_DISTANCE * 0.1) {
-        setCardOpacity(1);
+        cardOpacity.setValue(1);
       }
     });
 
     return () => {
       cardPosition.x.removeListener(listenerId);
     };
-  }, [cardPosition.x]);
+  }, [cardPosition.x, cardOpacity]);
 
   const cardRotate = cardPosition.x.interpolate({
     inputRange: [-SCREEN_W, 0, SCREEN_W],
@@ -1992,7 +2033,7 @@ export default function ProfileScreen() {
       setCardDisplayIndex(foundIndex);
       setViewMode("card");
       cardPosition.setValue({ x: 0, y: 0 });
-      setCardOpacity(1);
+      cardOpacity.setValue(1);
       cardEntryScale.setValue(1);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
@@ -2022,15 +2063,36 @@ export default function ProfileScreen() {
 
     if (!question) {
       return (
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: "black",
-            padding: 24,
-            justifyContent: "center",
-          }}
-        >
-          <Text style={{ color: "white" }}>No questions</Text>
+        <View style={{ flex: 1, backgroundColor: "black" }}>
+          <View
+            style={{
+              position: "absolute",
+              top: insets.top + 8,
+              left: 16,
+              zIndex: 20,
+            }}
+          >
+            <Pressable
+              onPress={() => handleBackToList()}
+              style={{
+                padding: 8,
+              }}
+            >
+              <Octicons name="chevron-left" size={24} color="white" />
+            </Pressable>
+          </View>
+          <View
+            style={{
+              flex: 1,
+              justifyContent: "center",
+              alignItems: "center",
+              paddingHorizontal: 24,
+            }}
+          >
+            <Text style={{ color: "white", fontSize: 18, textAlign: "center" }}>
+              No questions available
+            </Text>
+          </View>
         </View>
       );
     }
@@ -2054,165 +2116,126 @@ export default function ProfileScreen() {
 
     return (
       <View style={{ flex: 1, backgroundColor: "black" }}>
+        {/* Back button header */}
         <View
           style={{
             position: "absolute",
-            bottom: 16,
-            left: 24,
-            right: 24,
-            flexDirection: "row",
-            justifyContent: "space-between",
-            alignItems: "center",
-            zIndex: 10,
+            top: insets.top + 8,
+            left: 16,
+            zIndex: 20,
           }}
         >
           <Pressable
-            onPress={handleBackToList}
-            style={({ pressed }) => ({
-              paddingHorizontal: 16,
-              paddingVertical: 12,
-              borderRadius: 12,
-              borderWidth: 1,
-              borderColor: pressed ? "#333" : "transparent",
-              backgroundColor: pressed ? "#1c1c1c" : "transparent",
-              minWidth: 60,
-              alignItems: "center",
-              justifyContent: "center",
-            })}
+            onPress={() => handleBackToList()}
+            style={{
+              padding: 8,
+            }}
           >
-            <View style={{ alignItems: "center", justifyContent: "center" }}>
-              <Octicons name='arrow-left' size={24} color='#aaa' />
-              <Text
-                style={{
-                  color: "#aaa",
-                  fontSize: 12,
-                  marginTop: 4,
-                  fontWeight: "500",
-                }}
-              >
-                Back
-              </Text>
-            </View>
+            <Octicons name="chevron-left" size={24} color="white" />
           </Pressable>
-          <View style={{ minWidth: 60 }} />
-          <View style={{ minWidth: 60 }} />
         </View>
 
-        <View style={{ flex: 1, justifyContent: "center", padding: 24 }}>
-          <Animated.View
-            key={`${question.id}-${cardDisplayIndex}`}
-            {...cardPanResponder.panHandlers}
-            style={[
-              {
-                borderRadius: 24,
-                borderWidth: 1,
-                borderColor: "#333",
-                backgroundColor: "#0f0f0f",
-                overflow: "hidden",
-                opacity: cardOpacity,
-              },
-              cardStyle,
-              {
-                transform: [...cardStyle.transform, { scale: cardEntryScale }],
-              },
-            ]}
-          >
+        <Animated.View
+          {...cardPanResponder.panHandlers}
+          style={{
+            flex: 1,
+            justifyContent: "center",
+            paddingHorizontal: 24,
+            paddingTop: insets.top + 20,
+            opacity: cardOpacity,
+            transform: [
+              { translateX: cardPosition.x },
+              { scale: cardEntryScale },
+            ],
+          }}
+        >
+          <View style={{ gap: 16 }}>
             <View
               style={{
-                padding: 16,
-                borderBottomWidth: 1,
-                borderBottomColor: "#222",
+                flexDirection: "row",
+                alignItems: "center",
+                flexWrap: "wrap",
               }}
             >
-              <View
-                style={{
-                  flexDirection: "row",
-                  alignItems: "center",
-                  flexWrap: "wrap",
-                }}
-              >
-                <Text style={{ color: "#aaa", fontSize: 12 }}>
-                  {question.meta?.category ?? "General"}
-                </Text>
-                {question.meta?.createdBy && (
-                  <>
-                    <Text style={{ color: "#aaa", fontSize: 12 }}> • </Text>
-                    {question.meta.createdBy !== "Anonymous" &&
-                    question.meta.createdBy !== "You" &&
-                    question.visibleUserId ? (
-                      <Pressable
-                        onPress={() => {
-                          Haptics.impactAsync(
-                            Haptics.ImpactFeedbackStyle.Light,
-                          );
-                          router.push({
-                            pathname: "/user-profile",
-                            params: {
-                              username: question.meta?.createdBy,
-                              userId: question.visibleUserId,
-                            },
-                          });
-                        }}
-                      >
-                        {({ pressed }) => (
-                          <Text
-                            style={{
-                              color: "#aaa",
-                              fontSize: 12,
-                              textDecorationLine: pressed
-                                ? "underline"
-                                : "none",
-                            }}
-                          >
-                            {question.meta?.createdBy}
-                          </Text>
-                        )}
-                      </Pressable>
-                    ) : (
-                      <Text style={{ color: "#aaa", fontSize: 12 }}>
-                        {question.meta.createdBy}
-                      </Text>
-                    )}
-                  </>
-                )}
-              </View>
-              <Text
-                style={{
-                  color: "white",
-                  fontSize: 20,
-                  fontWeight: "800",
-                  marginTop: 6,
-                }}
-              >
-                {question.title}
+              <Text style={{ color: "#aaa", fontSize: 14 }}>
+                {question.meta?.category ?? "General"}
               </Text>
+              {question.meta?.createdBy && (
+                <>
+                  <Text style={{ color: "#aaa", fontSize: 14 }}> • </Text>
+                  {question.meta.createdBy !== "Anonymous" &&
+                  question.meta.createdBy !== "You" &&
+                  question.visibleUserId ? (
+                    <Pressable
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        router.push({
+                          pathname: "/user-profile",
+                          params: {
+                            username: question.meta?.createdBy,
+                            userId: question.visibleUserId,
+                          },
+                        });
+                      }}
+                    >
+                      {({ pressed }) => (
+                        <Text
+                          style={{
+                            color: "#aaa",
+                            fontSize: 14,
+                            textDecorationLine: pressed ? "underline" : "none",
+                          }}
+                        >
+                          @{question.meta?.createdBy}
+                        </Text>
+                      )}
+                    </Pressable>
+                  ) : (
+                    <Text style={{ color: "#aaa", fontSize: 14 }}>
+                      {question.meta.createdBy}
+                    </Text>
+                  )}
+                </>
+              )}
             </View>
 
-            <ScrollView
-              style={{ maxHeight: 260 }}
-              contentContainerStyle={{ padding: 16, gap: 12 }}
-              nestedScrollEnabled
-            >
-              <Text style={{ color: "white", fontSize: 16, lineHeight: 22 }}>
-                {question.prompt}
-              </Text>
-
-              {question.promptImageUrl && (
-                <Image
-                  source={{ uri: question.promptImageUrl }}
-                  style={{ width: "100%", height: 180, borderRadius: 16 }}
-                />
-              )}
-            </ScrollView>
-
-            <View
+            <Text
               style={{
-                padding: 16,
-                gap: 12,
-                borderTopWidth: 1,
-                borderTopColor: "#222",
+                color: "white",
+                fontSize: 28,
+                fontWeight: "800",
+                lineHeight: 34,
               }}
             >
+              {question.title}
+            </Text>
+
+            {question.promptImageUrl && (
+              <Image
+                source={{ uri: question.promptImageUrl }}
+                style={{
+                  width: "100%",
+                  height: 200,
+                  borderRadius: 16,
+                }}
+                resizeMode="cover"
+              />
+            )}
+
+            {question.prompt && (
+              <Text
+                style={{
+                  color: "#ccc",
+                  fontSize: 18,
+                  lineHeight: 26,
+                }}
+              >
+                {question.prompt}
+              </Text>
+            )}
+
+            <View style={{ gap: 12, marginTop: 8 }}>
               <FullScreenChoice
                 choice={question.left}
                 direction="left"
@@ -2236,13 +2259,9 @@ export default function ProfileScreen() {
                 animatedWidth={rightBarWidth}
                 isSelected={userVote === "right"}
               />
-
-              <Text style={{ color: "#777", fontSize: 12 }}>
-                Tip: Swipe left or right to navigate between questions.
-              </Text>
             </View>
-          </Animated.View>
-        </View>
+          </View>
+        </Animated.View>
       </View>
     );
   }
