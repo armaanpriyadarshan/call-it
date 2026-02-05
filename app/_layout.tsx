@@ -9,7 +9,7 @@ import 'react-native-reanimated';
 
 import { useColorScheme } from '@/hooks/use-color-scheme';
 
-// Keep splash screen visible while we 
+// Keep splash screen visible
 SplashScreen.preventAutoHideAsync();
 
 function RootLayoutNav() {
