@@ -1,34 +1,34 @@
 import { QuestionCard } from "@/components/questions";
 import {
-    AutocompleteItem,
-    RecentSearchItem,
-    SearchBar,
-    SearchFilterTab,
+  AutocompleteItem,
+  RecentSearchItem,
+  SearchBar,
+  SearchFilterTab,
 } from "@/components/search";
 import { UserListItem } from "@/components/users";
 import { FullScreenChoice, ProgressBar } from "@/components/voting";
 import { useExploreTabReset } from "@/contexts/explore-tab-context";
 import {
-    useRealtimeQuestions,
-    useRealtimeUserVotes,
-    useRealtimeVoteCounts,
+  useRealtimeQuestions,
+  useRealtimeUserVotes,
+  useRealtimeVoteCounts,
 } from "@/lib/hooks/useRealtime";
 import { getFollowing } from "@/lib/queries/follows";
 import { getProfile, Profile } from "@/lib/queries/profiles";
 import { CategoryWithCount, Question as DbQuestion, getPopularCategories, getQuestions } from "@/lib/queries/questions";
 import {
-    autocompleteSearch,
-    AutocompleteSuggestion,
-    searchAll,
-    searchProfiles,
-    searchQuestions,
+  autocompleteSearch,
+  AutocompleteSuggestion,
+  searchAll,
+  searchProfiles,
+  searchQuestions,
 } from "@/lib/queries/search";
 import {
-    createVote,
-    deleteVote,
-    getFriendVotesForQuestions,
-    getUserVotes,
-    getVoteCounts,
+  createVote,
+  deleteVote,
+  getFriendVotesForQuestions,
+  getUserVotes,
+  getVoteCounts,
 } from "@/lib/queries/votes";
 import { createClerkSupabaseClient } from "@/lib/supabase";
 import type { Question, User, VoteHistoryItem, VotingFlowState } from "@/types";
@@ -39,18 +39,18 @@ import * as Haptics from "expo-haptics";
 import { useFocusEffect, useRouter } from "expo-router";
 import React from "react";
 import {
-    ActivityIndicator,
-    Animated,
-    Dimensions,
-    FlatList,
-    Image,
-    PanResponder,
-    Pressable,
-    RefreshControl,
-    ScrollView,
-    Text,
-    TextInput,
-    View,
+  ActivityIndicator,
+  Animated,
+  Dimensions,
+  FlatList,
+  Image,
+  PanResponder,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -102,7 +102,7 @@ const SWIPE_THRESHOLD = 0.25 * SCREEN_W;
 const HORIZONTAL_ACTIVATION_DX = 8;
 const LEFT_EDGE_THRESHOLD = 50;
 const MAX_RECENT_SEARCHES = 10;
-const SEARCH_BAR_HEIGHT = 112;
+const SEARCH_BAR_HEIGHT = 102;
 const CATEGORIES_HEIGHT = 60;
 const HEADER_HEIGHT = SEARCH_BAR_HEIGHT + CATEGORIES_HEIGHT;
 
@@ -211,6 +211,11 @@ export default function ExploreScreen() {
   const pressStartTimeRef = React.useRef<number>(0);
   const lastUndoTimeRef = React.useRef<number>(0);
   const choicesLayoutRef = React.useRef<{ y: number; height: number } | null>(null);
+  // Store animation target values to prevent visual glitches during vote reveal
+  const voteAnimationTargetRef = React.useRef<{
+    percentages: { left: number; right: number };
+    votes: { left: number; right: number };
+  } | null>(null);
 
   getTokenRef.current = getToken;
   userRef.current = user;
@@ -551,14 +556,6 @@ export default function ExploreScreen() {
       const currentUser = userRef.current;
       if (!currentUser) return;
 
-      const currentId = questionsRef.current[displayIndexRef.current]?.id;
-      const isCurrentCardInVoteFlow =
-        questionId === currentId &&
-        (flowStateRef.current === "voting" ||
-          flowStateRef.current === "revealing" ||
-          flowStateRef.current === "voted");
-      if (isCurrentCardInVoteFlow) return;
-
       const supabase = getSupabase();
       const [updatedVoteCounts, userVotesMap] = await Promise.all([
         getVoteCounts(supabase, [questionId]),
@@ -572,6 +569,16 @@ export default function ExploreScreen() {
       const userVote = userVotesMap.get(questionId);
 
       setQuestions((prev) => {
+        // Check if this card is in the vote flow - must check INSIDE the callback
+        // to get current values after the async operation
+        const currentId = questionsRef.current[displayIndexRef.current]?.id;
+        const isCurrentCardInVoteFlow =
+          questionId === currentId &&
+          (flowStateRef.current === "voting" ||
+            flowStateRef.current === "revealing" ||
+            flowStateRef.current === "voted");
+        if (isCurrentCardInVoteFlow) return prev;
+
         const updated = [...prev];
         const idx = updated.findIndex((q) => q.id === questionId);
         if (idx !== -1) {
@@ -846,6 +853,7 @@ export default function ExploreScreen() {
     (question: Question) => {
       const foundIndex = questions.findIndex((q) => q.id === question.id);
       if (foundIndex >= 0) {
+        voteAnimationTargetRef.current = null;
         setDisplayIndex(foundIndex);
         setViewMode("card");
         position.setValue({ x: 0, y: 0 });
@@ -861,8 +869,10 @@ export default function ExploreScreen() {
     [questions, position, contentOpacity, contentScale, leftBarWidth, rightBarWidth],
   );
 
-  const handleBackToList = React.useCallback(() => {
+  const handleBackToList = React.useCallback((options?: { skipPositionReset?: boolean }) => {
+    const skipPositionReset = options?.skipPositionReset ?? false;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    voteAnimationTargetRef.current = null;
     setViewMode("list");
     setUndoneCardOverride(null);
     setFlowState("viewing");
@@ -872,7 +882,9 @@ export default function ExploreScreen() {
     rightBarWidth.setValue(0);
     contentOpacity.setValue(1);
     contentScale.setValue(1);
-    position.setValue({ x: 0, y: 0 });
+    if (!skipPositionReset) {
+      position.setValue({ x: 0, y: 0 });
+    }
   }, [position, leftBarWidth, rightBarWidth, contentOpacity, contentScale]);
 
   const actionsRef = React.useRef({
@@ -931,16 +943,17 @@ export default function ExploreScreen() {
         right: 0,
       };
 
-      const isCurrentCardInVoteFlow =
-        questionsRef.current[displayIndexRef.current]?.id === currentQuestion.id &&
-        (flowStateRef.current === "voting" ||
-          flowStateRef.current === "revealing" ||
-          flowStateRef.current === "voted");
-
       setQuestions((prev) => {
         if (pendingUndoIdsRef.current.has(currentQuestion.id)) {
           return prev;
         }
+        // Check if this card is still in the vote flow - must check INSIDE the callback
+        // to get current values after the async operation
+        const isCurrentCardInVoteFlow =
+          questionsRef.current[displayIndexRef.current]?.id === currentQuestion.id &&
+          (flowStateRef.current === "voting" ||
+            flowStateRef.current === "revealing" ||
+            flowStateRef.current === "voted");
         if (isCurrentCardInVoteFlow) return prev;
         const updated = [...prev];
         const q = updated[currentIndex];
@@ -984,8 +997,20 @@ export default function ExploreScreen() {
 
     const currentQuestions = questionsRef.current;
     const currentIndex = displayIndexRef.current;
-    const nextIdx =
-      currentIndex + 1 >= currentQuestions.length ? 0 : currentIndex + 1;
+    const isAtEnd = currentIndex + 1 >= currentQuestions.length;
+
+    // If at end and in a category, don't loop - show "no more questions"
+    if (isAtEnd && selectedCategory) {
+      voteAnimationTargetRef.current = null;
+      setDisplayIndex(currentQuestions.length); // Set past end to trigger empty state
+      setFlowState("viewing");
+      return;
+    }
+
+    const nextIdx = isAtEnd ? 0 : currentIndex + 1;
+
+    // Clear animation target for next question
+    voteAnimationTargetRef.current = null;
 
     contentOpacity.setValue(0);
     position.setValue({ x: 0, y: 0 });
@@ -1026,15 +1051,18 @@ export default function ExploreScreen() {
       return;
     }
 
-    // If on first question, go back to list
+    // If on first question, go back to list (skip position reset since card is already swiped off)
     if (currentIndex === 0) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      handleBackToList();
+      handleBackToList({ skipPositionReset: true });
       return;
     }
 
     const prevIdx = currentIndex - 1;
     const prevQuestion = currentQuestions[prevIdx];
+
+    // Clear animation target for previous question
+    voteAnimationTargetRef.current = null;
 
     contentOpacity.setValue(0);
     position.setValue({ x: 0, y: 0 });
@@ -1212,6 +1240,21 @@ export default function ExploreScreen() {
 
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
+    // Calculate target values BEFORE calling recordVote to capture pre-vote counts
+    const votes = currentQuestion.votes ?? { left: 0, right: 0 };
+    const newVotes = {
+      left: direction === "left" ? votes.left + 1 : votes.left,
+      right: direction === "right" ? votes.right + 1 : votes.right,
+    };
+    const total = newVotes.left + newVotes.right;
+    const targetPercentages = getNormalizedPercentages(newVotes.left, newVotes.right, total);
+
+    // Store animation targets to prevent visual glitches from optimistic updates
+    voteAnimationTargetRef.current = {
+      percentages: targetPercentages,
+      votes: newVotes,
+    };
+
     setFlowState("voting");
     setVotedDirection(direction);
 
@@ -1220,22 +1263,14 @@ export default function ExploreScreen() {
     // Start reveal immediately for seamless animation
     setFlowState("revealing");
 
-    const votes = currentQuestion.votes ?? { left: 0, right: 0 };
-    const newVotes = {
-      left: direction === "left" ? votes.left + 1 : votes.left,
-      right: direction === "right" ? votes.right + 1 : votes.right,
-    };
-    const total = newVotes.left + newVotes.right;
-    const percentages = getNormalizedPercentages(newVotes.left, newVotes.right, total);
-
     Animated.parallel([
       Animated.timing(leftBarWidth, {
-        toValue: percentages.left,
+        toValue: targetPercentages.left,
         duration: REVEAL_DURATION,
         useNativeDriver: false,
       }),
       Animated.timing(rightBarWidth, {
-        toValue: percentages.right,
+        toValue: targetPercentages.right,
         duration: REVEAL_DURATION,
         useNativeDriver: false,
       }),
@@ -1264,6 +1299,9 @@ export default function ExploreScreen() {
     const direction = currentQuestion.userVote;
 
     initiallyVotedIdsRef.current.delete(questionId);
+
+    // Clear animation target when undoing
+    voteAnimationTargetRef.current = null;
 
     setFlowState("viewing");
     setVotedDirection(null);
@@ -1377,11 +1415,20 @@ export default function ExploreScreen() {
           if (gesture.dx > SWIPE_THRESHOLD) {
             // Swipe right = go to previous question (or back to list if at first)
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-            Animated.timing(position, {
-              toValue: { x: SCREEN_W, y: 0 },
-              duration: 150,
-              useNativeDriver: true,
-            }).start(() => {
+            const isFirstCard = displayIndexRef.current === 0;
+            Animated.parallel([
+              Animated.timing(position, {
+                toValue: { x: SCREEN_W, y: 0 },
+                duration: 150,
+                useNativeDriver: true,
+              }),
+              // Fade out when going back to list for smoother transition
+              ...(isFirstCard ? [Animated.timing(contentOpacity, {
+                toValue: 0,
+                duration: 150,
+                useNativeDriver: true,
+              })] : []),
+            ]).start(() => {
               actionsRef.current.goToPrevious();
             });
           } else if (gesture.dx < -SWIPE_THRESHOLD) {
@@ -1411,19 +1458,19 @@ export default function ExploreScreen() {
           }).start();
         },
       }),
-    [position, handleBackToList],
+    [position, contentOpacity, handleBackToList],
   );
 
   React.useEffect(() => {
     if (viewMode !== "card" || !baseQuestion) return;
     // Don't interfere with ongoing vote animation
-    if (flowState === "voting" || flowState === "revealing") return;
+    // Don't interfere with ongoing vote animation (including voted state which shows results)
+    if (flowState === "voting" || flowState === "revealing" || flowState === "voted") return;
     const wasVotedBefore = initiallyVotedIdsRef.current.has(baseQuestion.id);
     const isAlreadyVoted = wasVotedBefore || baseQuestion.isOwnQuestion;
-    const justVoted = flowState === "voted" && baseQuestion.hasVoted;
     const viewingVotedQuestion =
       flowState === "viewing" && !!baseQuestion.hasVoted;
-    if (!isAlreadyVoted && !justVoted && !viewingVotedQuestion) return;
+    if (!isAlreadyVoted && !viewingVotedQuestion) return;
     const votes = baseQuestion.votes ?? { left: 0, right: 0 };
     const total = votes.left + votes.right;
     const pct = getNormalizedPercentages(votes.left, votes.right, total);
@@ -1672,7 +1719,7 @@ export default function ExploreScreen() {
             }}
           >
             <Pressable
-              onPress={handleBackToList}
+              onPress={() => handleBackToList()}
               style={{
                 padding: 8,
               }}
@@ -1705,7 +1752,7 @@ export default function ExploreScreen() {
             }}
           >
             <Pressable
-              onPress={handleBackToList}
+              onPress={() => handleBackToList()}
               style={{
                 padding: 8,
               }}
@@ -1734,8 +1781,8 @@ export default function ExploreScreen() {
             {selectedCategory && (
               <Pressable
                 onPress={() => {
-                  setSelectedCategory(null);
                   handleBackToList();
+                  setSelectedCategory(null);
                 }}
                 style={{
                   marginTop: 20,
@@ -1759,14 +1806,19 @@ export default function ExploreScreen() {
     const wasVotedBeforeSession = initiallyVotedIdsRef.current.has(question.id);
     const isResultsMode = wasVotedBeforeSession || question.isOwnQuestion;
 
-    // Calculate percentages
-    const currentVotes = question?.votes ?? { left: 0, right: 0 };
-    const currentTotal = currentVotes.left + currentVotes.right;
-    const percentages = getNormalizedPercentages(
-      currentVotes.left,
-      currentVotes.right,
-      currentTotal,
+    // Calculate percentages from state
+    const stateVotes = question?.votes ?? { left: 0, right: 0 };
+    const stateTotal = stateVotes.left + stateVotes.right;
+    const statePercentages = getNormalizedPercentages(
+      stateVotes.left,
+      stateVotes.right,
+      stateTotal,
     );
+
+    // During animation (revealing/voted), use the target values to prevent visual glitches
+    const isInVoteAnimation = (flowState === "revealing" || flowState === "voted") && voteAnimationTargetRef.current;
+    const displayVotes = isInVoteAnimation ? voteAnimationTargetRef.current!.votes : stateVotes;
+    const percentages = isInVoteAnimation ? voteAnimationTargetRef.current!.percentages : statePercentages;
 
     const showResults =
       flowState === "revealing" ||
@@ -1793,7 +1845,7 @@ export default function ExploreScreen() {
           }}
         >
           <Pressable
-            onPress={handleBackToList}
+            onPress={() => handleBackToList()}
             style={{
               padding: 8,
             }}
@@ -1805,13 +1857,21 @@ export default function ExploreScreen() {
         <Animated.View
           {...panResponder.panHandlers}
           onTouchStart={() => {
-            if (isVotedOrResultsView) {
+            const currentFlowState = flowStateRef.current;
+            const currentQ = questionsRef.current[displayIndexRef.current];
+            const questionHasVote = currentQ?.hasVoted && currentQ?.userVote;
+            if (currentFlowState === "voted" || currentFlowState === "revealing" || questionHasVote) {
               pressStartTimeRef.current = Date.now();
               setIsTimerPaused(true);
             }
           }}
           onTouchEnd={(e) => {
-            if (isVotedOrResultsView) {
+            const currentFlowState = flowStateRef.current;
+            const currentQ = questionsRef.current[displayIndexRef.current];
+            const questionHasVote = currentQ?.hasVoted && currentQ?.userVote;
+            const canInteract = currentFlowState === "voted" || currentFlowState === "revealing" || questionHasVote;
+
+            if (canInteract) {
               setIsTimerPaused(false);
               const pressDuration = Date.now() - pressStartTimeRef.current;
               const touchX = e.nativeEvent.pageX;
@@ -1819,7 +1879,8 @@ export default function ExploreScreen() {
               const layout = choicesLayoutRef.current;
               const isOnChoices = layout && touchY >= layout.y && touchY <= layout.y + layout.height;
 
-              if (pressDuration < 150 && !isOnChoices) {
+              // Allow tap gestures (not just quick taps) when not on choices
+              if (pressDuration < 300 && !isOnChoices) {
                 if (touchX > SCREEN_W / 2) {
                   actionsRef.current.advance(null);
                 } else {
@@ -1937,30 +1998,40 @@ export default function ExploreScreen() {
                 choice={question.left}
                 direction="left"
                 onPress={() => {
-                  if (isVotedOrResultsView) {
-                    const pressDuration = Date.now() - pressStartTimeRef.current;
-                    if (pressDuration < 150) {
-                      actionsRef.current.undoCurrentQuestion();
-                    }
-                  } else {
+                  const currentFlowState = flowStateRef.current;
+                  const currentQ = questionsRef.current[displayIndexRef.current];
+                  const questionHasVote = currentQ?.hasVoted && currentQ?.userVote;
+                  // Can undo if we just voted (voted or revealing state) OR if viewing a pre-voted question
+                  const canUndo = currentFlowState === "voted" || currentFlowState === "revealing" ||
+                    (currentFlowState === "viewing" && questionHasVote);
+                  if (canUndo) {
+                    actionsRef.current.undoCurrentQuestion();
+                  } else if (currentFlowState === "viewing" && !questionHasVote) {
                     actionsRef.current.handleChoiceTap("left");
                   }
+                  // In other states (transitioning), do nothing
                 }}
                 onPressIn={() => {
-                  if (isVotedOrResultsView) {
+                  const currentFlowState = flowStateRef.current;
+                  const currentQ = questionsRef.current[displayIndexRef.current];
+                  const questionHasVote = currentQ?.hasVoted && currentQ?.userVote;
+                  if (currentFlowState === "voted" || currentFlowState === "revealing" || questionHasVote) {
                     pressStartTimeRef.current = Date.now();
                     setIsTimerPaused(true);
                   }
                 }}
                 onPressOut={() => {
-                  if (isVotedOrResultsView) {
+                  const currentFlowState = flowStateRef.current;
+                  const currentQ = questionsRef.current[displayIndexRef.current];
+                  const questionHasVote = currentQ?.hasVoted && currentQ?.userVote;
+                  if (currentFlowState === "voted" || currentFlowState === "revealing" || questionHasVote) {
                     setIsTimerPaused(false);
                   }
                 }}
                 disabled={!canTapChoices && !isVotedOrResultsView}
                 showResults={showResults}
                 percentage={showResults ? percentages.left : 0}
-                votes={currentVotes.left}
+                votes={displayVotes.left}
                 animatedWidth={leftBarWidth}
                 friendVotes={question.friendVotes?.left?.map(f => ({ userId: f.userId, avatarUrl: f.avatarUrl }))}
                 isSelected={!hideChoiceHighlight && (votedDirection === "left" || question.userVote === "left")}
@@ -1969,30 +2040,40 @@ export default function ExploreScreen() {
                 choice={question.right}
                 direction="right"
                 onPress={() => {
-                  if (isVotedOrResultsView) {
-                    const pressDuration = Date.now() - pressStartTimeRef.current;
-                    if (pressDuration < 150) {
-                      actionsRef.current.undoCurrentQuestion();
-                    }
-                  } else {
+                  const currentFlowState = flowStateRef.current;
+                  const currentQ = questionsRef.current[displayIndexRef.current];
+                  const questionHasVote = currentQ?.hasVoted && currentQ?.userVote;
+                  // Can undo if we just voted (voted or revealing state) OR if viewing a pre-voted question
+                  const canUndo = currentFlowState === "voted" || currentFlowState === "revealing" ||
+                    (currentFlowState === "viewing" && questionHasVote);
+                  if (canUndo) {
+                    actionsRef.current.undoCurrentQuestion();
+                  } else if (currentFlowState === "viewing" && !questionHasVote) {
                     actionsRef.current.handleChoiceTap("right");
                   }
+                  // In other states (transitioning), do nothing
                 }}
                 onPressIn={() => {
-                  if (isVotedOrResultsView) {
+                  const currentFlowState = flowStateRef.current;
+                  const currentQ = questionsRef.current[displayIndexRef.current];
+                  const questionHasVote = currentQ?.hasVoted && currentQ?.userVote;
+                  if (currentFlowState === "voted" || currentFlowState === "revealing" || questionHasVote) {
                     pressStartTimeRef.current = Date.now();
                     setIsTimerPaused(true);
                   }
                 }}
                 onPressOut={() => {
-                  if (isVotedOrResultsView) {
+                  const currentFlowState = flowStateRef.current;
+                  const currentQ = questionsRef.current[displayIndexRef.current];
+                  const questionHasVote = currentQ?.hasVoted && currentQ?.userVote;
+                  if (currentFlowState === "voted" || currentFlowState === "revealing" || questionHasVote) {
                     setIsTimerPaused(false);
                   }
                 }}
                 disabled={!canTapChoices && !isVotedOrResultsView}
                 showResults={showResults}
                 percentage={showResults ? percentages.right : 0}
-                votes={currentVotes.right}
+                votes={displayVotes.right}
                 animatedWidth={rightBarWidth}
                 friendVotes={question.friendVotes?.right?.map(f => ({ userId: f.userId, avatarUrl: f.avatarUrl }))}
                 isSelected={!hideChoiceHighlight && (votedDirection === "right" || question.userVote === "right")}
@@ -2259,7 +2340,7 @@ export default function ExploreScreen() {
         <View
           style={{
             paddingTop: 60,
-            paddingBottom: 12,
+            paddingBottom: 6,
             paddingHorizontal: 16,
           }}
         >
