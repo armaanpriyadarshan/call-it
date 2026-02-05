@@ -1,6 +1,6 @@
 import { QuestionCard } from "@/components/questions";
 import { UserListItem, UserProfileHeader } from "@/components/users";
-import { ChoiceOption } from "@/components/voting";
+import { FullScreenChoice, ProgressBar } from "@/components/voting";
 import {
     useRealtimeFollows,
     useRealtimeUserQuestionVotes,
@@ -22,7 +22,7 @@ import {
     getVoteCounts,
 } from "@/lib/queries/votes";
 import { createClerkSupabaseClient } from "@/lib/supabase";
-import type { Question, User } from "@/types";
+import type { Question, User, VotingFlowState } from "@/types";
 import { getNormalizedPercentages } from "@/utils/voting";
 import { useSession, useUser } from "@clerk/clerk-expo";
 import Octicons from "@expo/vector-icons/Octicons";
@@ -133,6 +133,14 @@ export default function UserProfileScreen() {
     { questionIndex: number; direction: "left" | "right" }[]
   >([]);
 
+  // Voting flow state for tap-to-vote UI
+  const [flowState, setFlowState] = useState<VotingFlowState>("viewing");
+  const [votedDirection, setVotedDirection] = useState<"left" | "right" | null>(null);
+  const [isTimerPaused, setIsTimerPaused] = useState(false);
+
+  const TIMER_DURATION = 4000;
+  const REVEAL_DURATION = 400;
+
   const supabase = useMemo(() => {
     return session ? createClerkSupabaseClient(session) : null;
   }, [session]);
@@ -151,6 +159,13 @@ export default function UserProfileScreen() {
 
   const cardPosition = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const cardEntryScale = useRef(new Animated.Value(1)).current;
+  const leftBarWidth = useRef(new Animated.Value(0)).current;
+  const rightBarWidth = useRef(new Animated.Value(0)).current;
+  const flowStateRef = useRef(flowState);
+  const pressStartTimeRef = useRef<number>(0);
+  const lastUndoTimeRef = useRef<number>(0);
+
+  flowStateRef.current = flowState;
 
   useEffect(() => {
     async function fetchProfileData() {
@@ -522,6 +537,11 @@ export default function UserProfileScreen() {
       cardPosition.setValue({ x: 0, y: 0 });
       setCardOpacity(1);
       cardEntryScale.setValue(1);
+      setFlowState("viewing");
+      setVotedDirection(null);
+      setIsTimerPaused(false);
+      leftBarWidth.setValue(0);
+      rightBarWidth.setValue(0);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
   };
@@ -530,6 +550,11 @@ export default function UserProfileScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setViewMode("list");
     cardPosition.setValue({ x: 0, y: 0 });
+    setFlowState("viewing");
+    setVotedDirection(null);
+    setIsTimerPaused(false);
+    leftBarWidth.setValue(0);
+    rightBarWidth.setValue(0);
   };
 
   const recordVote = useCallback(
@@ -585,11 +610,6 @@ export default function UserProfileScreen() {
     [userQuestions.length, recordVote, cardDisplayIndex],
   );
 
-  const skip = useCallback(() => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    advance(null);
-  }, [advance]);
-
   const undo = useCallback(() => {
     if (voteHistory.length === 0) return;
 
@@ -624,30 +644,114 @@ export default function UserProfileScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   }, [voteHistory, cardPosition]);
 
-  const forceSwipe = useCallback(
+  const handleChoiceTap = useCallback(
     (direction: "left" | "right") => {
-      const x =
-        direction === "right" ? SWIPE_OUT_DISTANCE : -SWIPE_OUT_DISTANCE;
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      setSwipeProgress(0);
-      setSwipeDirection(null);
+      // Don't allow voting immediately after an undo
+      if (Date.now() - lastUndoTimeRef.current < 300) return;
+      const currentState = flowStateRef.current;
+      const currentQuestion = userQuestions[cardDisplayIndex];
 
-      Animated.timing(cardPosition, {
-        toValue: { x, y: 0 },
-        duration: ANIMATION_DURATION,
-        useNativeDriver: false,
-      }).start(() => {
-        advance(direction);
-      });
+      if (currentState !== "viewing") return;
+      if (!currentQuestion || currentQuestion.hasVoted || currentQuestion.isOwnQuestion) return;
+
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
+      setFlowState("voting");
+      setVotedDirection(direction);
+
+      recordVote(direction);
+
+      setTimeout(() => {
+        setFlowState("revealing");
+
+        const votes = currentQuestion.votes ?? { left: 0, right: 0 };
+        const newVotes = {
+          left: direction === "left" ? votes.left + 1 : votes.left,
+          right: direction === "right" ? votes.right + 1 : votes.right,
+        };
+        const total = newVotes.left + newVotes.right;
+        const percentages = getNormalizedPercentages(newVotes.left, newVotes.right, total);
+
+        Animated.parallel([
+          Animated.timing(leftBarWidth, {
+            toValue: percentages.left,
+            duration: REVEAL_DURATION,
+            useNativeDriver: false,
+          }),
+          Animated.timing(rightBarWidth, {
+            toValue: percentages.right,
+            duration: REVEAL_DURATION,
+            useNativeDriver: false,
+          }),
+        ]).start(() => {
+          setFlowState("voted");
+        });
+      }, 100);
     },
-    [cardPosition, advance],
+    [userQuestions, cardDisplayIndex, recordVote, leftBarWidth, rightBarWidth],
   );
+
+  const handleTimerComplete = useCallback(() => {
+    const currentState = flowStateRef.current;
+    if (currentState === "voted") {
+      // Reset flow state and advance to next
+      setFlowState("transitioning");
+      leftBarWidth.setValue(0);
+      rightBarWidth.setValue(0);
+      setVotedDirection(null);
+      setIsTimerPaused(false);
+      advance(null);
+      setTimeout(() => {
+        setFlowState("viewing");
+      }, 200);
+    }
+  }, [advance, leftBarWidth, rightBarWidth]);
+
+  const undoCurrentQuestion = useCallback(() => {
+    const currentQuestion = userQuestions[cardDisplayIndex];
+
+    if (!currentQuestion) return;
+    if (!currentQuestion.hasVoted || !currentQuestion.userVote) return;
+
+    // Undo the vote
+    const direction = currentQuestion.userVote;
+    setUserQuestions((prev) => {
+      const updated = [...prev];
+      const q = updated[cardDisplayIndex];
+      if (q) {
+        const votes = q.votes ?? { left: 0, right: 0 };
+        updated[cardDisplayIndex] = {
+          ...q,
+          votes: {
+            ...votes,
+            [direction]: Math.max(0, votes[direction] - 1),
+          },
+          hasVoted: false,
+          userVote: undefined,
+        };
+      }
+      return updated;
+    });
+
+    setVoteHistory((prev) => prev.filter((_, i) => i !== prev.length - 1));
+
+    setFlowState("viewing");
+    setVotedDirection(null);
+    setIsTimerPaused(false);
+    leftBarWidth.setValue(0);
+    rightBarWidth.setValue(0);
+    lastUndoTimeRef.current = Date.now();
+
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  }, [userQuestions, cardDisplayIndex, leftBarWidth, rightBarWidth]);
 
   const cardPanResponder = useMemo(
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: () => false,
         onMoveShouldSetPanResponder: (_, gesture) => {
+          // Only allow navigation swipes, not during voting flow
+          if (flowStateRef.current !== "viewing" && flowStateRef.current !== "voted") return false;
           const dx = Math.abs(gesture.dx);
           const dy = Math.abs(gesture.dy);
           if (dy > dx) return false;
@@ -657,10 +761,24 @@ export default function UserProfileScreen() {
           cardPosition.setValue({ x: gesture.dx, y: 0 });
         },
         onPanResponderRelease: (_, gesture) => {
+          // Swipe navigation only - no voting
           if (gesture.dx > SWIPE_THRESHOLD) {
-            forceSwipe("right");
+            // Swipe right = go back to list
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            handleBackToList();
+            cardPosition.setValue({ x: 0, y: 0 });
           } else if (gesture.dx < -SWIPE_THRESHOLD) {
-            forceSwipe("left");
+            // Swipe left = skip to next
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            setFlowState("transitioning");
+            leftBarWidth.setValue(0);
+            rightBarWidth.setValue(0);
+            setVotedDirection(null);
+            setIsTimerPaused(false);
+            advance(null);
+            setTimeout(() => {
+              setFlowState("viewing");
+            }, 200);
           } else {
             resetCard();
           }
@@ -669,7 +787,7 @@ export default function UserProfileScreen() {
           resetCard();
         },
       }),
-    [resetCard, forceSwipe, cardPosition],
+    [resetCard, cardPosition, advance, leftBarWidth, rightBarWidth],
   );
 
   useEffect(() => {
@@ -794,80 +912,21 @@ export default function UserProfileScreen() {
       );
     }
 
+    // Pre-voted questions show results immediately
     const isResultsMode = question.hasVoted || question.isOwnQuestion;
 
+    // Calculate percentages
     const currentVotes = question.votes ?? { left: 0, right: 0 };
     const currentTotal = currentVotes.left + currentVotes.right;
+    const percentages = getNormalizedPercentages(
+      currentVotes.left,
+      currentVotes.right,
+      currentTotal,
+    );
 
-    const previewVotes = {
-      left:
-        swipeDirection === "left" ? currentVotes.left + 1 : currentVotes.left,
-      right:
-        swipeDirection === "right"
-          ? currentVotes.right + 1
-          : currentVotes.right,
-    };
-
-    const totalPreviewVotes = previewVotes.left + previewVotes.right;
-
-    let leftPercentage: number;
-    let rightPercentage: number;
-
-    if (isResultsMode) {
-      const percentages = getNormalizedPercentages(
-        currentVotes.left,
-        currentVotes.right,
-        currentTotal,
-      );
-      leftPercentage = percentages.left;
-      rightPercentage = percentages.right;
-    } else if (swipeProgress > 0 && swipeDirection === "left") {
-      const percentages = getNormalizedPercentages(
-        previewVotes.left,
-        previewVotes.right,
-        totalPreviewVotes,
-      );
-      leftPercentage = percentages.left;
-      rightPercentage = percentages.right;
-    } else if (swipeProgress > 0 && swipeDirection === "right") {
-      const percentages = getNormalizedPercentages(
-        previewVotes.left,
-        previewVotes.right,
-        totalPreviewVotes,
-      );
-      leftPercentage = percentages.left;
-      rightPercentage = percentages.right;
-    } else {
-      const percentages = getNormalizedPercentages(
-        currentVotes.left,
-        currentVotes.right,
-        currentTotal,
-      );
-      leftPercentage = percentages.left;
-      rightPercentage = percentages.right;
-    }
-
-    const leftVotes = isResultsMode
-      ? currentVotes.left
-      : swipeProgress > 0 && swipeDirection === "left"
-        ? previewVotes.left
-        : currentVotes.left;
-    const rightVotes = isResultsMode
-      ? currentVotes.right
-      : swipeProgress > 0 && swipeDirection === "right"
-        ? previewVotes.right
-        : currentVotes.right;
-
-    const leftHighlight = isResultsMode
-      ? 0
-      : swipeDirection === "left"
-        ? swipeProgress
-        : 0;
-    const rightHighlight = isResultsMode
-      ? 0
-      : swipeDirection === "right"
-        ? swipeProgress
-        : 0;
+    const showResults = flowState === "revealing" || flowState === "voted" || isResultsMode === true;
+    const isTimerRunning = flowState === "voted" && !isResultsMode;
+    const canTapChoices = flowState === "viewing" && !isResultsMode;
 
     const cardRotate = cardPosition.x.interpolate({
       inputRange: [-SCREEN_W, 0, SCREEN_W],
@@ -955,7 +1014,17 @@ export default function UserProfileScreen() {
           )}
 
           <Pressable
-            onPress={skip}
+            onPress={() => {
+              setFlowState("transitioning");
+              leftBarWidth.setValue(0);
+              rightBarWidth.setValue(0);
+              setVotedDirection(null);
+              setIsTimerPaused(false);
+              advance(null);
+              setTimeout(() => {
+                setFlowState("viewing");
+              }, 200);
+            }}
             style={({ pressed }) => ({
               paddingHorizontal: 16,
               paddingVertical: 12,
@@ -978,7 +1047,7 @@ export default function UserProfileScreen() {
                   fontWeight: "500",
                 }}
               >
-                Skip
+                {isResultsMode || flowState === "voted" ? "Next" : "Skip"}
               </Text>
             </View>
           </Pressable>
@@ -988,6 +1057,17 @@ export default function UserProfileScreen() {
           <Animated.View
             key={`${question.id}-${cardDisplayIndex}`}
             {...cardPanResponder.panHandlers}
+            onTouchStart={() => {
+              if (flowState === "voted") {
+                pressStartTimeRef.current = Date.now();
+                setIsTimerPaused(true);
+              }
+            }}
+            onTouchEnd={() => {
+              if (flowState === "voted") {
+                setIsTimerPaused(false);
+              }
+            }}
             style={[
               {
                 borderRadius: 24,
@@ -1053,37 +1133,78 @@ export default function UserProfileScreen() {
                 borderTopColor: "#222",
               }}
             >
-              <ChoiceOption
+              <FullScreenChoice
                 choice={question.left}
-                direction='left'
-                percentage={leftPercentage}
-                votes={leftVotes}
-                swipeProgress={isResultsMode ? 0 : swipeProgress}
-                swipeDirection={isResultsMode ? null : swipeDirection}
-                isSelected={swipeDirection === "left"}
-                highlight={leftHighlight}
-                resultsMode={isResultsMode}
+                direction="left"
+                onPress={() => {
+                  if (flowState === "voted") {
+                    const pressDuration = Date.now() - pressStartTimeRef.current;
+                    if (pressDuration < 150) {
+                      undoCurrentQuestion();
+                    }
+                  } else {
+                    handleChoiceTap("left");
+                  }
+                }}
+                onPressIn={() => {
+                  if (flowState === "voted") {
+                    pressStartTimeRef.current = Date.now();
+                    setIsTimerPaused(true);
+                  }
+                }}
+                onPressOut={() => {
+                  if (flowState === "voted") {
+                    setIsTimerPaused(false);
+                  }
+                }}
+                disabled={!canTapChoices && flowState !== "voted"}
+                showResults={showResults}
+                percentage={showResults ? percentages.left : 0}
+                votes={currentVotes.left}
+                animatedWidth={leftBarWidth}
+                isSelected={votedDirection === "left" || question.userVote === "left"}
               />
 
-              <ChoiceOption
+              <FullScreenChoice
                 choice={question.right}
-                direction='right'
-                percentage={rightPercentage}
-                votes={rightVotes}
-                swipeProgress={isResultsMode ? 0 : swipeProgress}
-                swipeDirection={isResultsMode ? null : swipeDirection}
-                isSelected={swipeDirection === "right"}
-                highlight={rightHighlight}
-                resultsMode={isResultsMode}
+                direction="right"
+                onPress={() => {
+                  if (flowState === "voted") {
+                    const pressDuration = Date.now() - pressStartTimeRef.current;
+                    if (pressDuration < 150) {
+                      undoCurrentQuestion();
+                    }
+                  } else {
+                    handleChoiceTap("right");
+                  }
+                }}
+                onPressIn={() => {
+                  if (flowState === "voted") {
+                    pressStartTimeRef.current = Date.now();
+                    setIsTimerPaused(true);
+                  }
+                }}
+                onPressOut={() => {
+                  if (flowState === "voted") {
+                    setIsTimerPaused(false);
+                  }
+                }}
+                disabled={!canTapChoices && flowState !== "voted"}
+                showResults={showResults}
+                percentage={showResults ? percentages.right : 0}
+                votes={currentVotes.right}
+                animatedWidth={rightBarWidth}
+                isSelected={votedDirection === "right" || question.userVote === "right"}
               />
 
-              <Text style={{ color: "#777", fontSize: 12 }}>
-                {isResultsMode
-                  ? question.isOwnQuestion
-                    ? "This is your question. Swipe to see the next one."
-                    : "You've already voted. Swipe to see the next one."
-                  : "Tip: Scroll vertically in the prompt. Swipe left or right to pick."}
-              </Text>
+              <View style={{ marginTop: 8, opacity: isTimerRunning ? 1 : 0 }}>
+                <ProgressBar
+                  duration={TIMER_DURATION}
+                  isRunning={isTimerRunning}
+                  isPaused={isTimerPaused}
+                  onComplete={handleTimerComplete}
+                />
+              </View>
             </View>
           </Animated.View>
         </View>

@@ -29,6 +29,7 @@ import {
 } from "@/lib/queries/votes";
 import { createClerkSupabaseClient } from "@/lib/supabase";
 import type { ImageInfo, Question, User, VoteHistoryItem } from "@/types";
+import { FullScreenChoice } from "@/components/voting";
 import { formatDate } from "@/utils/date";
 import { getNormalizedPercentages } from "@/utils/voting";
 import { useAuth, useSession, useUser } from "@clerk/clerk-expo";
@@ -1052,6 +1053,9 @@ export default function ProfileScreen() {
 
   const cardPosition = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const cardEntryScale = useRef(new Animated.Value(1)).current;
+  // Static animated values for results display
+  const leftBarWidth = useRef(new Animated.Value(0)).current;
+  const rightBarWidth = useRef(new Animated.Value(0)).current;
 
   const screenWidth = Dimensions.get("window").width;
   const tabIndicatorPosition = useRef(
@@ -2038,8 +2042,10 @@ export default function ProfileScreen() {
       currentVotes.right,
       currentTotal,
     );
-    const leftPercentage = percentages.left;
-    const rightPercentage = percentages.right;
+
+    // Set static animated values for results display
+    leftBarWidth.setValue(percentages.left);
+    rightBarWidth.setValue(percentages.right);
 
     const userVote =
       activeTab === "history" && cardDisplayIndex < voteHistory.length
@@ -2207,239 +2213,29 @@ export default function ProfileScreen() {
                 borderTopColor: "#222",
               }}
             >
-              <View
-                style={{
-                  borderRadius: 18,
-                  borderWidth: userVote === "left" ? 2 : 1,
-                  borderColor:
-                    userVote === "left" ? "rgba(59, 130, 246, 0.6)" : "#333",
-                  backgroundColor: "#1c1c1c",
-                  overflow: "visible",
-                  position: "relative",
-                }}
-              >
-                {userVote === "left" && (
-                  <View
-                    style={{
-                      position: "absolute",
-                      top: -8,
-                      right: -8,
-                      backgroundColor: "rgba(59, 130, 246, 0.9)",
-                      borderRadius: 12,
-                      width: 24,
-                      height: 24,
-                      alignItems: "center",
-                      justifyContent: "center",
-                      zIndex: 10,
-                    }}
-                  >
-                    <Octicons name='check' size={14} color='white' />
-                  </View>
-                )}
-                <View
-                  style={{
-                    position: "relative",
-                    overflow: "hidden",
-                    borderRadius: 16,
-                  }}
-                >
-                  <View
-                    style={{
-                      position: "absolute",
-                      left: 0,
-                      top: 0,
-                      bottom: 0,
-                      width: `${leftPercentage}%`,
-                      backgroundColor:
-                        userVote === "left"
-                          ? "rgba(59, 130, 246, 0.25)"
-                          : "rgba(255, 255, 255, 0.15)",
-                    }}
-                  />
-                  <View
-                    style={{ padding: 12, position: "relative", zIndex: 1 }}
-                  >
-                    <View
-                      style={{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: 12,
-                      }}
-                    >
-                      <View
-                        style={{
-                          flexDirection: "row",
-                          alignItems: "center",
-                          gap: 12,
-                          flex: 1,
-                        }}
-                      >
-                        {question.left.imageUrl && (
-                          <Image
-                            source={{ uri: question.left.imageUrl }}
-                            style={{ width: 44, height: 44, borderRadius: 12 }}
-                          />
-                        )}
-                        <Text
-                          style={{
-                            color: userVote === "left" ? "#60a5fa" : "white",
-                            fontSize: 16,
-                            fontWeight: "700",
-                            textAlign: "left",
-                          }}
-                        >
-                          {question.left.label}
-                        </Text>
-                      </View>
-                      <View
-                        style={{
-                          alignItems: "flex-end",
-                          minWidth: 65,
-                          opacity: 1,
-                        }}
-                      >
-                        <Text
-                          style={{
-                            color: "#aaa",
-                            fontSize: 14,
-                            fontWeight: "600",
-                          }}
-                        >
-                          {leftPercentage}%
-                        </Text>
-                        <Text
-                          style={{
-                            color: "#aaa",
-                            fontSize: 12,
-                            fontWeight: "500",
-                          }}
-                        >
-                          ({currentVotes.left}{" "}
-                          {currentVotes.left === 1 ? "vote" : "votes"})
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
-                </View>
-              </View>
+              <FullScreenChoice
+                choice={question.left}
+                direction="left"
+                onPress={() => {}}
+                disabled={true}
+                showResults={true}
+                percentage={percentages.left}
+                votes={currentVotes.left}
+                animatedWidth={leftBarWidth}
+                isSelected={userVote === "left"}
+              />
 
-              <View
-                style={{
-                  borderRadius: 18,
-                  borderWidth: userVote === "right" ? 2 : 1,
-                  borderColor:
-                    userVote === "right" ? "rgba(239, 68, 68, 0.6)" : "#333",
-                  backgroundColor: "#1c1c1c",
-                  overflow: "visible",
-                  position: "relative",
-                }}
-              >
-                {userVote === "right" && (
-                  <View
-                    style={{
-                      position: "absolute",
-                      top: -8,
-                      left: -8,
-                      backgroundColor: "rgba(239, 68, 68, 0.9)",
-                      borderRadius: 12,
-                      width: 24,
-                      height: 24,
-                      alignItems: "center",
-                      justifyContent: "center",
-                      zIndex: 10,
-                    }}
-                  >
-                    <Octicons name='check' size={14} color='white' />
-                  </View>
-                )}
-                <View
-                  style={{
-                    position: "relative",
-                    overflow: "hidden",
-                    borderRadius: 16,
-                  }}
-                >
-                  <View
-                    style={{
-                      position: "absolute",
-                      right: 0,
-                      top: 0,
-                      bottom: 0,
-                      width: `${rightPercentage}%`,
-                      backgroundColor:
-                        userVote === "right"
-                          ? "rgba(239, 68, 68, 0.25)"
-                          : "rgba(255, 255, 255, 0.15)",
-                    }}
-                  />
-                  <View
-                    style={{ padding: 12, position: "relative", zIndex: 1 }}
-                  >
-                    <View
-                      style={{
-                        flexDirection: "row-reverse",
-                        alignItems: "center",
-                        justifyContent: "space-between",
-                        gap: 12,
-                      }}
-                    >
-                      <View
-                        style={{
-                          flexDirection: "row-reverse",
-                          alignItems: "center",
-                          gap: 12,
-                          flex: 1,
-                        }}
-                      >
-                        {question.right.imageUrl && (
-                          <Image
-                            source={{ uri: question.right.imageUrl }}
-                            style={{ width: 44, height: 44, borderRadius: 12 }}
-                          />
-                        )}
-                        <Text
-                          style={{
-                            color: userVote === "right" ? "#f87171" : "white",
-                            fontSize: 16,
-                            fontWeight: "700",
-                            textAlign: "right",
-                          }}
-                        >
-                          {question.right.label}
-                        </Text>
-                      </View>
-                      <View
-                        style={{
-                          alignItems: "flex-start",
-                          minWidth: 65,
-                          opacity: 1,
-                        }}
-                      >
-                        <Text
-                          style={{
-                            color: "#aaa",
-                            fontSize: 14,
-                            fontWeight: "600",
-                          }}
-                        >
-                          {rightPercentage}%
-                        </Text>
-                        <Text
-                          style={{
-                            color: "#aaa",
-                            fontSize: 12,
-                            fontWeight: "500",
-                          }}
-                        >
-                          ({currentVotes.right}{" "}
-                          {currentVotes.right === 1 ? "vote" : "votes"})
-                        </Text>
-                      </View>
-                    </View>
-                  </View>
-                </View>
-              </View>
+              <FullScreenChoice
+                choice={question.right}
+                direction="right"
+                onPress={() => {}}
+                disabled={true}
+                showResults={true}
+                percentage={percentages.right}
+                votes={currentVotes.right}
+                animatedWidth={rightBarWidth}
+                isSelected={userVote === "right"}
+              />
 
               <Text style={{ color: "#777", fontSize: 12 }}>
                 Tip: Swipe left or right to navigate between questions.
