@@ -167,7 +167,6 @@ export default function HomeScreen() {
     const prevTab = prevSelectedTabRef.current;
     const currentFlowState = flowStateRef.current;
 
-    // If we switched tabs while in "voted" state, advance to next question on the previous tab
     if (prevTab !== selectedTab && (currentFlowState === "voted" || currentFlowState === "revealing")) {
       const prevQuestions = questionsByTabRef.current[prevTab] ?? [];
       const prevIndex = displayIndicesRef.current[prevTab] ?? 0;
@@ -190,8 +189,6 @@ export default function HomeScreen() {
     setVotedDirection(null);
     setIsTimerPaused(false);
 
-    // When switching tabs, check if we need to skip the current question
-    // This handles the case where a question was voted on in another tab
     if (prevTab !== selectedTab) {
       const newTabQuestions = questionsByTabRef.current[selectedTab] ?? [];
       const newTabFilteredQuestions = selectedTab === 2
@@ -201,7 +198,6 @@ export default function HomeScreen() {
 
       const currentQ = newTabFilteredQuestions[newTabIndex];
       if (currentQ && currentQ.hasVoted && !currentQ.isOwnQuestion && !sessionInteractedIdsRef.current.has(currentQ.id)) {
-        // Find next unvoted question
         let foundUnvoted = false;
         for (let i = 1; i < newTabFilteredQuestions.length; i++) {
           const idx = (newTabIndex + i) % newTabFilteredQuestions.length;
@@ -212,7 +208,6 @@ export default function HomeScreen() {
             break;
           }
         }
-        // If no unvoted question found, set index out of bounds to show empty state
         if (!foundUnvoted) {
           setDisplayIndices((prev) => ({ ...prev, [selectedTab]: newTabFilteredQuestions.length }));
         }
@@ -220,24 +215,20 @@ export default function HomeScreen() {
     }
   }, [selectedTab, loading, position, contentOpacity, contentScale, leftBarWidth, rightBarWidth, friendsVotedQuestionIds]);
 
-  // Helper function to find next unvoted question index
   const findNextUnvotedIndex = React.useCallback((questions: Question[], currentIndex: number): number | null => {
     if (questions.length === 0) return null;
 
     const currentQuestion = questions[currentIndex];
     if (!currentQuestion) return null;
 
-    // If current question is not voted or is own question, no skip needed
     if (!currentQuestion.hasVoted || currentQuestion.isOwnQuestion) {
       return null;
     }
 
-    // If this question was interacted with in this session, don't auto-skip
     if (sessionInteractedIdsRef.current.has(currentQuestion.id)) {
       return null;
     }
 
-    // Search forward for an unvoted question or own question
     for (let i = 1; i < questions.length; i++) {
       const idx = (currentIndex + i) % questions.length;
       const q = questions[idx];
@@ -246,10 +237,9 @@ export default function HomeScreen() {
       }
     }
 
-    return null; // All questions are voted
+    return null;
   }, []);
 
-  // Skip past already-voted questions (own questions show in results mode)
   React.useEffect(() => {
     if (filteredQuestions.length === 0) return;
     if (flowState !== "viewing") return;
@@ -257,14 +247,11 @@ export default function HomeScreen() {
     const currentQuestion = filteredQuestions[displayIndex];
     if (!currentQuestion) return;
 
-    // Check if current question needs to be skipped
     if (currentQuestion.hasVoted && !currentQuestion.isOwnQuestion && !sessionInteractedIdsRef.current.has(currentQuestion.id)) {
       const nextIdx = findNextUnvotedIndex(filteredQuestions, displayIndex);
       if (nextIdx !== null && nextIdx !== displayIndex) {
-        // Found an unvoted question, skip to it
         setDisplayIndices((prev) => ({ ...prev, [selectedTab]: nextIdx }));
       } else {
-        // All questions are voted, set index out of bounds to show empty state
         setDisplayIndices((prev) => ({ ...prev, [selectedTab]: filteredQuestions.length }));
       }
     }
@@ -347,7 +334,6 @@ export default function HomeScreen() {
 
       initiallyVotedIdsRef.current = new Set();
       localVoteIdsRef.current = new Set();
-      // Note: Don't reset sessionInteractedIdsRef here - it should persist across tabs
 
       const mappedQuestions = eligibleQuestions.map((dbQ) => {
         const scoredQ = dbQ as ScoredQuestion;
@@ -527,12 +513,9 @@ export default function HomeScreen() {
     const questionId = currentQuestion.id;
 
     localVoteIdsRef.current.add(questionId);
-    // Note: Don't add to sessionInteractedIdsRef here - we want voted questions
-    // to be skipped when switching to other tabs where the same question exists
 
     setQuestionsByTab((prev) => {
       const updated = { ...prev };
-      // Update the question in ALL tabs, not just current
       for (const tabKey of Object.keys(updated)) {
         const tab = Number(tabKey);
         const tabQuestions = updated[tab] ?? [];
@@ -642,7 +625,6 @@ export default function HomeScreen() {
       return;
     }
 
-    // Find the next unvoted question (or own question which shows in results mode)
     let nextIdx: number | null = null;
     for (let i = 1; i <= currentQuestions.length; i++) {
       const idx = (currentIndex + i) % currentQuestions.length;
@@ -653,7 +635,6 @@ export default function HomeScreen() {
       }
     }
 
-    // If no unvoted question found, set index out of bounds to show empty state
     if (nextIdx === null) {
       setFlowState("viewing");
       setVotedDirection(null);
@@ -705,7 +686,6 @@ export default function HomeScreen() {
       return;
     }
 
-    // If on first question, refresh the feed
     if (currentIndex === 0) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       contentOpacity.setValue(0);
@@ -733,7 +713,6 @@ export default function HomeScreen() {
     setIsTimerPaused(false);
     contentScale.setValue(0.97);
 
-    // Always mark the previous question as interacted so it won't be skipped
     if (prevQuestion) {
       sessionInteractedIdsRef.current.add(prevQuestion.id);
     }
@@ -818,7 +797,6 @@ export default function HomeScreen() {
     const direction = currentQuestion.userVote;
 
     localVoteIdsRef.current.delete(questionId);
-    // Keep in sessionInteractedIdsRef so it won't be auto-skipped
     sessionInteractedIdsRef.current.add(questionId);
 
     setQuestionsByTab((prev) => {
@@ -872,7 +850,6 @@ export default function HomeScreen() {
   };
 
   actionsRef.current.handleChoiceTap = (direction: "left" | "right") => {
-    // Don't allow voting immediately after an undo (prevent accidental double-tap)
     if (Date.now() - lastUndoTimeRef.current < 300) return;
     const currentState = flowStateRef.current;
     const currentQuestions = questionsRef.current;
@@ -889,7 +866,6 @@ export default function HomeScreen() {
 
     actionsRef.current.recordVote(direction);
 
-    // Start reveal immediately for seamless animation
     setFlowState("revealing");
 
     const votes = currentQuestion.votes ?? { left: 0, right: 0 };
@@ -941,7 +917,6 @@ export default function HomeScreen() {
       PanResponder.create({
         onStartShouldSetPanResponder: () => false,
         onMoveShouldSetPanResponder: (_, gesture) => {
-          // Allow swiping during "viewing" and after voting (hasVoted becomes true instantly)
           const currentQuestion = questionsRef.current[displayIndexRef.current];
           const canSwipe = flowStateRef.current === "viewing" ||
             flowStateRef.current === "voted" ||
@@ -1099,7 +1074,6 @@ export default function HomeScreen() {
   const showResults = flowState === "revealing" || flowState === "voted" || isResultsMode === true;
   const isTimerRunning = flowState === "voted" && !isResultsMode;
   const canTapChoices = flowState === "viewing" && !isResultsMode;
-  // Allow instant skip after voting (hasVoted becomes true immediately via optimistic update)
   const canSkipOrUndo = flowState === "voted" || !!question?.hasVoted;
 
   return (

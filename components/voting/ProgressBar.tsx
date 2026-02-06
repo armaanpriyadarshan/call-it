@@ -19,7 +19,6 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
   const currentProgressRef = React.useRef(0);
   const startTimeRef = React.useRef<number | null>(null);
 
-  // Track current progress value
   React.useEffect(() => {
     const listenerId = progress.addListener(({ value }) => {
       currentProgressRef.current = value;
@@ -29,10 +28,8 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
     };
   }, [progress]);
 
-  // Handle running state
   React.useEffect(() => {
     if (isRunning && !isPaused) {
-      // Calculate remaining duration based on current progress
       const remainingProgress = 1 - currentProgressRef.current;
       const remainingDuration = remainingProgress * duration;
 
@@ -53,13 +50,11 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
         }
       });
     } else if (isRunning && isPaused) {
-      // Pause: stop the animation but keep current progress
       if (animationRef.current) {
         animationRef.current.stop();
         animationRef.current = null;
       }
     } else {
-      // Not running: reset everything
       if (animationRef.current) {
         animationRef.current.stop();
         animationRef.current = null;

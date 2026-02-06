@@ -1061,7 +1061,6 @@ export default function ProfileScreen() {
   >("profile");
   const [followersFollowingSearch, setFollowersFollowingSearch] = useState("");
 
-  // Voters bottom sheet state
   const [votersSheetVisible, setVotersSheetVisible] = useState(false);
   const [votersSheetChoice, setVotersSheetChoice] = useState<"left" | "right">("left");
   const [votersSheetChoiceLabel, setVotersSheetChoiceLabel] = useState("");
@@ -1084,7 +1083,6 @@ export default function ProfileScreen() {
       },
       onPanResponderRelease: (_, gestureState) => {
         if (gestureState.dy > 100 || gestureState.vy > 0.5) {
-          // Close the sheet
           Animated.timing(votersSheetTranslateY, {
             toValue: 1000,
             duration: 250,
@@ -1095,7 +1093,6 @@ export default function ProfileScreen() {
             setVoterFollowStatus(new Map());
           });
         } else {
-          // Snap back
           Animated.spring(votersSheetTranslateY, {
             toValue: 0,
             useNativeDriver: true,
@@ -1112,7 +1109,6 @@ export default function ProfileScreen() {
   const cardOpacity = useRef(new Animated.Value(1)).current;
   const cardDisplayIndexRef = useRef(cardDisplayIndex);
   cardDisplayIndexRef.current = cardDisplayIndex;
-  // Static animated values for results display
   const leftBarWidth = useRef(new Animated.Value(0)).current;
   const rightBarWidth = useRef(new Animated.Value(0)).current;
 
@@ -1262,8 +1258,6 @@ export default function ProfileScreen() {
 
         if (votedQuestionsFromHistory.length > 0) {
           const votedQuestionIds = votedQuestionsFromHistory.map((q) => q.id);
-
-          // Fetch following IDs for friend votes
           const followingIds = await getFollowing(supabase, currentUser.id);
 
           const [votedVoteCounts, friendVotesMap] = await Promise.all([
@@ -1795,7 +1789,6 @@ export default function ProfileScreen() {
     setVotersLoading(true);
     setVotersSheetVisible(true);
 
-    // Animate sheet up
     Animated.spring(votersSheetTranslateY, {
       toValue: 0,
       useNativeDriver: true,
@@ -1808,7 +1801,6 @@ export default function ProfileScreen() {
       const votersList = await getQuestionVoters(supabase, questionId, choice);
       setVoters(votersList);
 
-      // Check follow status for all voters
       const statusMap = new Map<string, boolean>();
       await Promise.all(
         votersList.map(async (voter) => {
@@ -1876,7 +1868,6 @@ export default function ProfileScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setViewMode("list");
     setProfileView("profile");
-    // Ensure profile view is visible when returning to list
     profileViewOpacity.setValue(1);
     profileViewTranslateY.setValue(0);
     followersFollowingOpacity.setValue(0);
@@ -2078,7 +2069,6 @@ export default function ProfileScreen() {
       const isFirst = currentIndex === 0;
       const isLast = currentIndex === questions.length - 1;
 
-      // Prevent swiping out of bounds - just snap back
       if ((direction === "right" && isFirst) || (direction === "left" && isLast)) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
         resetCard();
@@ -2251,7 +2241,6 @@ export default function ProfileScreen() {
       currentTotal,
     );
 
-    // Set static animated values for results display
     leftBarWidth.setValue(percentages.left);
     rightBarWidth.setValue(percentages.right);
 
@@ -2262,7 +2251,6 @@ export default function ProfileScreen() {
 
     return (
       <View style={{ flex: 1, backgroundColor: "black" }}>
-        {/* Back button header */}
         <View
           style={{
             position: "absolute",
@@ -2421,7 +2409,6 @@ export default function ProfileScreen() {
           </View>
         </Animated.View>
 
-        {/* Voters Bottom Sheet */}
         {votersSheetVisible && (
           <Animated.View
             style={{
@@ -2437,7 +2424,6 @@ export default function ProfileScreen() {
               paddingBottom: insets.bottom,
             }}
           >
-            {/* Handle bar + Header (swipeable area) */}
             <View {...votersSheetPanResponder.panHandlers}>
               <View
                 style={{
@@ -2455,7 +2441,6 @@ export default function ProfileScreen() {
                 />
               </View>
 
-              {/* Header */}
               <View
                 style={{
                   flexDirection: "row",
@@ -2476,7 +2461,6 @@ export default function ProfileScreen() {
               </View>
             </View>
 
-            {/* Voters List */}
             {votersLoading ? (
               <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
                 <ActivityIndicator size="large" color="white" />
@@ -2597,7 +2581,6 @@ export default function ProfileScreen() {
           </Animated.View>
         )}
 
-        {/* Backdrop for bottom sheet */}
         {votersSheetVisible && (
           <Pressable
             onPress={closeVotersSheet}

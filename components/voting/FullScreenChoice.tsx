@@ -34,14 +34,11 @@ export const FullScreenChoice: React.FC<FullScreenChoiceProps> = ({
 }) => {
   const scaleAnim = React.useRef(new Animated.Value(1)).current;
 
-  // Derive opacity from animatedWidth so text fades in with the bar during animation.
-  // For 0% results (percentage is 0 but showResults is true), always show text.
   const animatedOpacity = animatedWidth.interpolate({
     inputRange: [0, 15, 100],
     outputRange: [0, 1, 1],
     extrapolate: "clamp",
   });
-  // If showing results with 0%, use full opacity; otherwise use animated opacity
   const resultsOpacity = percentage === 0 && showResults ? 1 : animatedOpacity;
 
   const handlePressIn = () => {

@@ -157,7 +157,6 @@ export default function UserProfileScreen() {
   const [followersFollowingSearch, setFollowersFollowingSearch] = useState("");
   const [voteHistory, setVoteHistory] = useState<VoteHistoryItem[]>([]);
 
-  // Voting flow state for tap-to-vote UI
   const [flowState, setFlowState] = useState<VotingFlowState>("viewing");
   const [votedDirection, setVotedDirection] = useState<"left" | "right" | null>(null);
   const [isTimerPaused, setIsTimerPaused] = useState(false);
@@ -711,7 +710,6 @@ export default function UserProfileScreen() {
     }
   }, [position, leftBarWidth, rightBarWidth, contentOpacity, contentScale]);
 
-  // --- actionsRef pattern (matches explore.tsx) ---
   const actionsRef = useRef({
     recordVote: (_direction: "left" | "right") => {},
     advance: (_direction: "left" | "right" | null) => {},
@@ -852,7 +850,6 @@ export default function UserProfileScreen() {
       return;
     }
 
-    // If on first question, go back to list
     if (currentIndex === 0) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
       handleBackToList({ skipPositionReset: true });
@@ -872,7 +869,6 @@ export default function UserProfileScreen() {
     setIsTimerPaused(false);
     contentScale.setValue(0.97);
 
-    // If the previous question was voted, undo it
     const prevDirection = prevQuestion?.userVote;
     if (prevQuestion && prevQuestion.hasVoted && prevDirection && currentUser?.id) {
       const questionId = prevQuestion.id;
@@ -1203,7 +1199,6 @@ export default function UserProfileScreen() {
           }
 
           if (gesture.dx > SWIPE_THRESHOLD) {
-            // Swipe right = go to previous question (or back to list if at first)
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             const isFirstCard = displayIndexRef.current === 0;
             Animated.parallel([
@@ -1221,7 +1216,6 @@ export default function UserProfileScreen() {
               actionsRef.current.goToPrevious();
             });
           } else if (gesture.dx < -SWIPE_THRESHOLD) {
-            // Swipe left = skip to next
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
             Animated.timing(position, {
               toValue: { x: -SCREEN_W, y: 0 },
@@ -1250,7 +1244,6 @@ export default function UserProfileScreen() {
     [position, contentOpacity, handleBackToList],
   );
 
-  // Set bar widths for pre-voted / own questions
   useEffect(() => {
     if (viewMode !== "card" || !baseQuestion) return;
     if (flowState === "voting" || flowState === "revealing" || flowState === "voted") return;
@@ -1364,11 +1357,9 @@ export default function UserProfileScreen() {
       );
     }
 
-    // Pre-voted questions show results immediately
     const wasVotedBeforeSession = initiallyVotedIdsRef.current.has(question.id);
     const isResultsMode = wasVotedBeforeSession || question.isOwnQuestion;
 
-    // Calculate percentages from state
     const stateVotes = question?.votes ?? { left: 0, right: 0 };
     const stateTotal = stateVotes.left + stateVotes.right;
     const statePercentages = getNormalizedPercentages(
@@ -1377,7 +1368,6 @@ export default function UserProfileScreen() {
       stateTotal,
     );
 
-    // During animation, use target values to prevent visual glitches
     const isInVoteAnimation = (flowState === "revealing" || flowState === "voted") && voteAnimationTargetRef.current;
     const displayVotes = isInVoteAnimation ? voteAnimationTargetRef.current!.votes : stateVotes;
     const percentages = isInVoteAnimation ? voteAnimationTargetRef.current!.percentages : statePercentages;
@@ -1397,7 +1387,6 @@ export default function UserProfileScreen() {
 
     return (
       <View style={{ flex: 1, backgroundColor: "black" }}>
-        {/* Back button header */}
         <View
           style={{
             position: "absolute",
