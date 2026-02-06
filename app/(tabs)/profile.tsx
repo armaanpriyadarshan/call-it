@@ -1071,6 +1071,42 @@ export default function ProfileScreen() {
   const [followingInProgress, setFollowingInProgress] = useState<Set<string>>(new Set());
   const votersSheetTranslateY = useRef(new Animated.Value(1000)).current;
 
+  const votersSheetPanResponder = useRef(
+    PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_, gestureState) => {
+        return gestureState.dy > 10 && Math.abs(gestureState.dy) > Math.abs(gestureState.dx);
+      },
+      onPanResponderMove: (_, gestureState) => {
+        if (gestureState.dy > 0) {
+          votersSheetTranslateY.setValue(gestureState.dy);
+        }
+      },
+      onPanResponderRelease: (_, gestureState) => {
+        if (gestureState.dy > 100 || gestureState.vy > 0.5) {
+          // Close the sheet
+          Animated.timing(votersSheetTranslateY, {
+            toValue: 1000,
+            duration: 250,
+            useNativeDriver: true,
+          }).start(() => {
+            setVotersSheetVisible(false);
+            setVoters([]);
+            setVoterFollowStatus(new Map());
+          });
+        } else {
+          // Snap back
+          Animated.spring(votersSheetTranslateY, {
+            toValue: 0,
+            useNativeDriver: true,
+            tension: 65,
+            friction: 11,
+          }).start();
+        }
+      },
+    })
+  ).current;
+
   const cardPosition = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const cardEntryScale = useRef(new Animated.Value(1)).current;
   const cardOpacity = useRef(new Animated.Value(1)).current;
@@ -2396,60 +2432,62 @@ export default function ProfileScreen() {
               backgroundColor: "#1c1c1c",
               borderTopLeftRadius: 20,
               borderTopRightRadius: 20,
-              maxHeight: "70%",
+              height: "60%",
               transform: [{ translateY: votersSheetTranslateY }],
               paddingBottom: insets.bottom,
             }}
           >
-            {/* Handle bar */}
-            <View
-              style={{
-                alignItems: "center",
-                paddingVertical: 12,
-              }}
-            >
+            {/* Handle bar + Header (swipeable area) */}
+            <View {...votersSheetPanResponder.panHandlers}>
               <View
                 style={{
-                  width: 40,
-                  height: 4,
-                  backgroundColor: "#444",
-                  borderRadius: 2,
+                  alignItems: "center",
+                  paddingVertical: 12,
                 }}
-              />
-            </View>
+              >
+                <View
+                  style={{
+                    width: 40,
+                    height: 4,
+                    backgroundColor: "#444",
+                    borderRadius: 2,
+                  }}
+                />
+              </View>
 
-            {/* Header */}
-            <View
-              style={{
-                flexDirection: "row",
-                justifyContent: "space-between",
-                alignItems: "center",
-                paddingHorizontal: 20,
-                paddingBottom: 16,
-                borderBottomWidth: 1,
-                borderBottomColor: "#333",
-              }}
-            >
-              <Text style={{ color: "white", fontSize: 18, fontWeight: "700" }}>
-                {votersSheetChoiceLabel}
-              </Text>
-              <Pressable onPress={closeVotersSheet} style={{ padding: 4 }}>
-                <Octicons name="x" size={24} color="#aaa" />
-              </Pressable>
+              {/* Header */}
+              <View
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  paddingHorizontal: 20,
+                  paddingBottom: 16,
+                  borderBottomWidth: 1,
+                  borderBottomColor: "#333",
+                }}
+              >
+                <Text style={{ color: "white", fontSize: 18, fontWeight: "700" }}>
+                  {votersSheetChoiceLabel}
+                </Text>
+                <Pressable onPress={closeVotersSheet} style={{ padding: 4 }}>
+                  <Octicons name="x" size={24} color="#aaa" />
+                </Pressable>
+              </View>
             </View>
 
             {/* Voters List */}
             {votersLoading ? (
-              <View style={{ padding: 40, alignItems: "center" }}>
+              <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
                 <ActivityIndicator size="large" color="white" />
               </View>
             ) : voters.length === 0 ? (
-              <View style={{ padding: 40, alignItems: "center" }}>
+              <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
                 <Text style={{ color: "#666", fontSize: 16 }}>No votes yet</Text>
               </View>
             ) : (
               <ScrollView
-                style={{ maxHeight: 400 }}
+                style={{ flex: 1 }}
                 showsVerticalScrollIndicator={false}
               >
                 {voters.map((voter) => {
