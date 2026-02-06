@@ -8,6 +8,7 @@ import {
     useRealtimeUserVotes,
 } from "@/lib/hooks/useRealtime";
 import {
+    getFollowing,
     getFollowersWithProfiles,
     getFollowingWithProfiles,
     getUserStats,
@@ -22,6 +23,7 @@ import {
 } from "@/lib/queries/questions";
 import {
     deleteVote,
+    getFriendVotesForQuestions,
     getTotalVotesOnUserQuestions,
     getUserVotesCastCount,
     getUserVotingHistory,
@@ -1207,14 +1209,28 @@ export default function ProfileScreen() {
 
         if (votedQuestionsFromHistory.length > 0) {
           const votedQuestionIds = votedQuestionsFromHistory.map((q) => q.id);
-          const votedVoteCounts = await getVoteCounts(
-            supabase,
-            votedQuestionIds,
-          );
+
+          // Fetch following IDs for friend votes
+          const followingIds = await getFollowing(supabase, currentUser.id);
+
+          const [votedVoteCounts, friendVotesMap] = await Promise.all([
+            getVoteCounts(supabase, votedQuestionIds),
+            followingIds.length > 0
+              ? getFriendVotesForQuestions(supabase, votedQuestionIds, followingIds)
+              : Promise.resolve(new Map()),
+          ]);
+
           votedQuestionsFromHistory.forEach((q) => {
             const counts = votedVoteCounts.get(q.id);
             if (counts) {
               q.votes = counts;
+            }
+            const friendVotes = friendVotesMap.get(q.id);
+            if (friendVotes) {
+              q.friendVotes = {
+                left: friendVotes.left.map(f => ({ userId: f.userId, avatarUrl: f.avatarUrl })),
+                right: friendVotes.right.map(f => ({ userId: f.userId, avatarUrl: f.avatarUrl })),
+              };
             }
           });
         }
@@ -1920,38 +1936,27 @@ export default function ProfileScreen() {
       const currentIndex = cardDisplayIndexRef.current;
       const isFirst = currentIndex === 0;
       const isLast = currentIndex === questions.length - 1;
-      const isGoingBackToList =
-        (direction === "right" && isFirst) || (direction === "left" && isLast);
+
+      // Prevent swiping out of bounds - just snap back
+      if ((direction === "right" && isFirst) || (direction === "left" && isLast)) {
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+        resetCard();
+        return;
+      }
 
       const x =
         direction === "right" ? SWIPE_OUT_DISTANCE : -SWIPE_OUT_DISTANCE;
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
-      // Animate card off screen, with fade if going back to list
-      const animations: Animated.CompositeAnimation[] = [
-        Animated.timing(cardPosition, {
-          toValue: { x, y: 0 },
-          duration: ANIMATION_DURATION,
-          useNativeDriver: false,
-        }),
-      ];
-
-      if (isGoingBackToList) {
-        // Fade out when going back to list for smoother transition
-        animations.push(
-          Animated.timing(cardOpacity, {
-            toValue: 0,
-            duration: ANIMATION_DURATION,
-            useNativeDriver: false,
-          }),
-        );
-      }
-
-      Animated.parallel(animations).start(() => {
-        navigateCard(direction, isGoingBackToList);
+      Animated.timing(cardPosition, {
+        toValue: { x, y: 0 },
+        duration: ANIMATION_DURATION,
+        useNativeDriver: false,
+      }).start(() => {
+        navigateCard(direction, false);
       });
     },
-    [cardPosition, cardOpacity, navigateCard, getQuestionsForTab],
+    [cardPosition, navigateCard, getQuestionsForTab, resetCard],
   );
 
   const cardPanResponder = useMemo(
@@ -2246,6 +2251,7 @@ export default function ProfileScreen() {
                 votes={currentVotes.left}
                 animatedWidth={leftBarWidth}
                 isSelected={userVote === "left"}
+                friendVotes={question.friendVotes?.left?.map(f => ({ userId: f.userId, avatarUrl: f.avatarUrl }))}
               />
 
               <FullScreenChoice
@@ -2258,6 +2264,7 @@ export default function ProfileScreen() {
                 votes={currentVotes.right}
                 animatedWidth={rightBarWidth}
                 isSelected={userVote === "right"}
+                friendVotes={question.friendVotes?.right?.map(f => ({ userId: f.userId, avatarUrl: f.avatarUrl }))}
               />
             </View>
           </View>
