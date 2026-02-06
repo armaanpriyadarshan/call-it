@@ -24,12 +24,19 @@ import {
 import {
     deleteVote,
     getFriendVotesForQuestions,
+    getQuestionVoters,
     getTotalVotesOnUserQuestions,
     getUserVotesCastCount,
     getUserVotingHistory,
     getVoteCounts,
+    VoterProfile,
     VoteWithQuestion,
 } from "@/lib/queries/votes";
+import {
+    checkFollowStatus,
+    followUser,
+    unfollowUser,
+} from "@/lib/queries/follows";
 import { createClerkSupabaseClient } from "@/lib/supabase";
 import type { ImageInfo, Question, User, VoteHistoryItem } from "@/types";
 import { formatDate } from "@/utils/date";
@@ -1054,6 +1061,16 @@ export default function ProfileScreen() {
   >("profile");
   const [followersFollowingSearch, setFollowersFollowingSearch] = useState("");
 
+  // Voters bottom sheet state
+  const [votersSheetVisible, setVotersSheetVisible] = useState(false);
+  const [votersSheetChoice, setVotersSheetChoice] = useState<"left" | "right">("left");
+  const [votersSheetChoiceLabel, setVotersSheetChoiceLabel] = useState("");
+  const [voters, setVoters] = useState<VoterProfile[]>([]);
+  const [votersLoading, setVotersLoading] = useState(false);
+  const [voterFollowStatus, setVoterFollowStatus] = useState<Map<string, boolean>>(new Map());
+  const [followingInProgress, setFollowingInProgress] = useState<Set<string>>(new Set());
+  const votersSheetTranslateY = useRef(new Animated.Value(1000)).current;
+
   const cardPosition = useRef(new Animated.ValueXY({ x: 0, y: 0 })).current;
   const cardEntryScale = useRef(new Animated.Value(1)).current;
   const cardOpacity = useRef(new Animated.Value(1)).current;
@@ -1730,6 +1747,94 @@ export default function ProfileScreen() {
     }
   };
 
+  const openVotersSheet = useCallback(async (
+    questionId: string,
+    choice: "left" | "right",
+    choiceLabel: string
+  ) => {
+    if (!clerkUser?.id) return;
+
+    setVotersSheetChoice(choice);
+    setVotersSheetChoiceLabel(choiceLabel);
+    setVotersLoading(true);
+    setVotersSheetVisible(true);
+
+    // Animate sheet up
+    Animated.spring(votersSheetTranslateY, {
+      toValue: 0,
+      useNativeDriver: true,
+      tension: 65,
+      friction: 11,
+    }).start();
+
+    try {
+      const supabase = getSupabase();
+      const votersList = await getQuestionVoters(supabase, questionId, choice);
+      setVoters(votersList);
+
+      // Check follow status for all voters
+      const statusMap = new Map<string, boolean>();
+      await Promise.all(
+        votersList.map(async (voter) => {
+          if (voter.userId !== clerkUser.id) {
+            const isFollowing = await checkFollowStatus(supabase, clerkUser.id, voter.userId);
+            statusMap.set(voter.userId, isFollowing);
+          }
+        })
+      );
+      setVoterFollowStatus(statusMap);
+    } catch (err) {
+      console.error("Failed to fetch voters:", err);
+    } finally {
+      setVotersLoading(false);
+    }
+  }, [clerkUser?.id, getSupabase, votersSheetTranslateY]);
+
+  const closeVotersSheet = useCallback(() => {
+    Animated.timing(votersSheetTranslateY, {
+      toValue: 1000,
+      duration: 250,
+      useNativeDriver: true,
+    }).start(() => {
+      setVotersSheetVisible(false);
+      setVoters([]);
+      setVoterFollowStatus(new Map());
+    });
+  }, [votersSheetTranslateY]);
+
+  const toggleFollowVoter = useCallback(async (voterId: string) => {
+    if (!clerkUser?.id || followingInProgress.has(voterId)) return;
+
+    setFollowingInProgress((prev) => new Set(prev).add(voterId));
+
+    try {
+      const supabase = getSupabase();
+      const isCurrentlyFollowing = voterFollowStatus.get(voterId) || false;
+
+      if (isCurrentlyFollowing) {
+        await unfollowUser(supabase, clerkUser.id, voterId);
+      } else {
+        await followUser(supabase, clerkUser.id, voterId);
+      }
+
+      setVoterFollowStatus((prev) => {
+        const newMap = new Map(prev);
+        newMap.set(voterId, !isCurrentlyFollowing);
+        return newMap;
+      });
+
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    } catch (err) {
+      console.error("Failed to toggle follow:", err);
+    } finally {
+      setFollowingInProgress((prev) => {
+        const newSet = new Set(prev);
+        newSet.delete(voterId);
+        return newSet;
+      });
+    }
+  }, [clerkUser?.id, getSupabase, voterFollowStatus, followingInProgress]);
+
   const handleBackToList = useCallback((options?: { skipPositionReset?: boolean }) => {
     const skipPositionReset = options?.skipPositionReset ?? false;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -2244,8 +2349,13 @@ export default function ProfileScreen() {
               <FullScreenChoice
                 choice={question.left}
                 direction="left"
-                onPress={() => {}}
-                disabled={true}
+                onPress={() => {
+                  if (activeTab === "questions" && currentVotes.left > 0) {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    openVotersSheet(question.id, "left", question.left.label);
+                  }
+                }}
+                disabled={activeTab !== "questions" || currentVotes.left === 0}
                 showResults={true}
                 percentage={percentages.left}
                 votes={currentVotes.left}
@@ -2257,8 +2367,13 @@ export default function ProfileScreen() {
               <FullScreenChoice
                 choice={question.right}
                 direction="right"
-                onPress={() => {}}
-                disabled={true}
+                onPress={() => {
+                  if (activeTab === "questions" && currentVotes.right > 0) {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    openVotersSheet(question.id, "right", question.right.label);
+                  }
+                }}
+                disabled={activeTab !== "questions" || currentVotes.right === 0}
                 showResults={true}
                 percentage={percentages.right}
                 votes={currentVotes.right}
@@ -2269,6 +2384,196 @@ export default function ProfileScreen() {
             </View>
           </View>
         </Animated.View>
+
+        {/* Voters Bottom Sheet */}
+        {votersSheetVisible && (
+          <Animated.View
+            style={{
+              position: "absolute",
+              bottom: 0,
+              left: 0,
+              right: 0,
+              backgroundColor: "#1c1c1c",
+              borderTopLeftRadius: 20,
+              borderTopRightRadius: 20,
+              maxHeight: "70%",
+              transform: [{ translateY: votersSheetTranslateY }],
+              paddingBottom: insets.bottom,
+            }}
+          >
+            {/* Handle bar */}
+            <View
+              style={{
+                alignItems: "center",
+                paddingVertical: 12,
+              }}
+            >
+              <View
+                style={{
+                  width: 40,
+                  height: 4,
+                  backgroundColor: "#444",
+                  borderRadius: 2,
+                }}
+              />
+            </View>
+
+            {/* Header */}
+            <View
+              style={{
+                flexDirection: "row",
+                justifyContent: "space-between",
+                alignItems: "center",
+                paddingHorizontal: 20,
+                paddingBottom: 16,
+                borderBottomWidth: 1,
+                borderBottomColor: "#333",
+              }}
+            >
+              <Text style={{ color: "white", fontSize: 18, fontWeight: "700" }}>
+                {votersSheetChoiceLabel}
+              </Text>
+              <Pressable onPress={closeVotersSheet} style={{ padding: 4 }}>
+                <Octicons name="x" size={24} color="#aaa" />
+              </Pressable>
+            </View>
+
+            {/* Voters List */}
+            {votersLoading ? (
+              <View style={{ padding: 40, alignItems: "center" }}>
+                <ActivityIndicator size="large" color="white" />
+              </View>
+            ) : voters.length === 0 ? (
+              <View style={{ padding: 40, alignItems: "center" }}>
+                <Text style={{ color: "#666", fontSize: 16 }}>No votes yet</Text>
+              </View>
+            ) : (
+              <ScrollView
+                style={{ maxHeight: 400 }}
+                showsVerticalScrollIndicator={false}
+              >
+                {voters.map((voter) => {
+                  const isCurrentUser = voter.userId === clerkUser?.id;
+                  const isFollowing = voterFollowStatus.get(voter.userId) || false;
+                  const isLoading = followingInProgress.has(voter.userId);
+                  const displayName = voter.username || voter.firstName || "User";
+
+                  return (
+                    <Pressable
+                      key={voter.userId}
+                      onPress={() => {
+                        if (!isCurrentUser) {
+                          closeVotersSheet();
+                          router.push({
+                            pathname: "/user-profile",
+                            params: {
+                              username: displayName,
+                              userId: voter.userId,
+                            },
+                          });
+                        }
+                      }}
+                      style={({ pressed }) => ({
+                        flexDirection: "row",
+                        alignItems: "center",
+                        paddingHorizontal: 20,
+                        paddingVertical: 12,
+                        backgroundColor: pressed ? "#252525" : "transparent",
+                      })}
+                    >
+                      {voter.avatarUrl ? (
+                        <Image
+                          source={{ uri: voter.avatarUrl }}
+                          style={{
+                            width: 44,
+                            height: 44,
+                            borderRadius: 22,
+                            backgroundColor: "#333",
+                          }}
+                        />
+                      ) : (
+                        <View
+                          style={{
+                            width: 44,
+                            height: 44,
+                            borderRadius: 22,
+                            backgroundColor: "#333",
+                            justifyContent: "center",
+                            alignItems: "center",
+                          }}
+                        >
+                          <Text style={{ color: "#666", fontSize: 18, fontWeight: "600" }}>
+                            {displayName.charAt(0).toUpperCase()}
+                          </Text>
+                        </View>
+                      )}
+
+                      <View style={{ flex: 1, marginLeft: 12 }}>
+                        <Text style={{ color: "white", fontSize: 16, fontWeight: "600" }}>
+                          {displayName}
+                          {isCurrentUser && " (You)"}
+                        </Text>
+                        {voter.firstName && voter.lastName && voter.username && (
+                          <Text style={{ color: "#888", fontSize: 14 }}>
+                            {voter.firstName} {voter.lastName}
+                          </Text>
+                        )}
+                      </View>
+
+                      {!isCurrentUser && (
+                        <Pressable
+                          onPress={(e) => {
+                            e.stopPropagation();
+                            toggleFollowVoter(voter.userId);
+                          }}
+                          disabled={isLoading}
+                          style={{
+                            paddingHorizontal: 16,
+                            paddingVertical: 8,
+                            borderRadius: 8,
+                            backgroundColor: isFollowing ? "transparent" : "white",
+                            borderWidth: isFollowing ? 1 : 0,
+                            borderColor: "#444",
+                          }}
+                        >
+                          {isLoading ? (
+                            <ActivityIndicator size="small" color={isFollowing ? "white" : "black"} />
+                          ) : (
+                            <Text
+                              style={{
+                                color: isFollowing ? "white" : "black",
+                                fontSize: 14,
+                                fontWeight: "600",
+                              }}
+                            >
+                              {isFollowing ? "Following" : "Follow"}
+                            </Text>
+                          )}
+                        </Pressable>
+                      )}
+                    </Pressable>
+                  );
+                })}
+              </ScrollView>
+            )}
+          </Animated.View>
+        )}
+
+        {/* Backdrop for bottom sheet */}
+        {votersSheetVisible && (
+          <Pressable
+            onPress={closeVotersSheet}
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: "rgba(0, 0, 0, 0.5)",
+              zIndex: -1,
+            }}
+          />
+        )}
       </View>
     );
   }

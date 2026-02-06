@@ -284,6 +284,74 @@ export interface FriendVote {
   avatarUrl: string | null;
 }
 
+export interface VoterProfile {
+  userId: string;
+  username: string | null;
+  firstName: string | null;
+  lastName: string | null;
+  avatarUrl: string | null;
+  choice: 'left' | 'right';
+}
+
+export async function getQuestionVoters(
+  supabase: SupabaseClient,
+  questionId: string,
+  choice: 'left' | 'right'
+): Promise<VoterProfile[]> {
+  const { data: votes, error: votesError } = await supabase
+    .from('votes')
+    .select('user_id, choice')
+    .eq('question_id', questionId)
+    .eq('choice', choice);
+
+  if (votesError) {
+    throw votesError;
+  }
+
+  if (!votes || votes.length === 0) {
+    return [];
+  }
+
+  const voterIds = votes.map((v) => v.user_id);
+
+  const { data: profiles, error: profilesError } = await supabase
+    .from('profiles')
+    .select('user_id, username, first_name, last_name, avatar_url')
+    .in('user_id', voterIds);
+
+  if (profilesError) {
+    throw profilesError;
+  }
+
+  const profileMap = new Map<string, {
+    username: string | null;
+    firstName: string | null;
+    lastName: string | null;
+    avatarUrl: string | null;
+  }>();
+
+  for (const profile of profiles || []) {
+    profileMap.set(profile.user_id, {
+      username: profile.username,
+      firstName: profile.first_name,
+      lastName: profile.last_name,
+      avatarUrl: profile.avatar_url,
+    });
+  }
+
+  return votes.map((vote) => {
+    const profile = profileMap.get(vote.user_id);
+    return {
+      userId: vote.user_id,
+      username: profile?.username || null,
+      firstName: profile?.firstName || null,
+      lastName: profile?.lastName || null,
+      avatarUrl: profile?.avatarUrl || null,
+      choice: vote.choice as 'left' | 'right',
+    };
+  });
+}
+
 export async function getFriendVotesForQuestions(
   supabase: SupabaseClient,
   questionIds: string[],
