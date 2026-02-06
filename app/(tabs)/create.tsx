@@ -456,7 +456,7 @@ export default function CreatePostScreen() {
       resetForm();
       setShowSuccess(true);
     } catch (err) {
-      console.error("Failed to create question:", err);
+      // TODO: show user-facing error
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     } finally {
       setBusy(false);

@@ -36,7 +36,7 @@ export default function SignIn() {
         router.replace("/(tabs)");
       }
     } catch (err) {
-      console.error("Google OAuth error:", err);
+      // TODO: show user-facing error
     }
   };
 
@@ -50,7 +50,7 @@ export default function SignIn() {
         router.replace("/(tabs)");
       }
     } catch (err) {
-      console.error("Apple OAuth error:", err);
+      // TODO: show user-facing error
     }
   };
 

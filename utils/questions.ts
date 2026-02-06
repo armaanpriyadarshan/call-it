@@ -1,5 +1,6 @@
+import type { FriendVoteInfo, Question, VoteHistoryItem } from "@/types";
 import type { Question as DbQuestion } from "@/lib/queries/questions";
-import type { Question } from "@/types";
+import type { VoteWithQuestion } from "@/lib/queries/votes";
 
 export function mapDbQuestionToQuestion(
   dbQuestion: DbQuestion,
@@ -8,6 +9,7 @@ export function mapDbQuestionToQuestion(
   creatorUsername?: string | null,
   userVote?: "left" | "right",
   currentUserId?: string,
+  friendVotes?: { left: FriendVoteInfo[]; right: FriendVoteInfo[] },
 ): Question {
   const isOwnQuestion = currentUserId === dbQuestion.user_id;
 
@@ -36,5 +38,15 @@ export function mapDbQuestionToQuestion(
     hasVoted: userVote !== undefined,
     userVote,
     isOwnQuestion,
+    friendVotes,
+  };
+}
+
+export function mapVoteHistoryItem(vote: VoteWithQuestion): VoteHistoryItem {
+  return {
+    questionId: vote.question_id,
+    questionTitle: vote.question?.title || "Unknown Question",
+    direction: vote.choice,
+    votedAt: vote.created_at,
   };
 }

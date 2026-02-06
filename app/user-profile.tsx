@@ -29,6 +29,7 @@ import {
 } from "@/lib/queries/votes";
 import { createClerkSupabaseClient } from "@/lib/supabase";
 import type { Question, User, VoteHistoryItem, VotingFlowState } from "@/types";
+import { mapDbQuestionToQuestion as mapDbQuestion } from "@/utils/questions";
 import { getNormalizedPercentages } from "@/utils/voting";
 import { useSession, useUser } from "@clerk/clerk-expo";
 import Octicons from "@expo/vector-icons/Octicons";
@@ -68,36 +69,15 @@ function mapDbQuestionToQuestion(
   const userVote = userVotes.get(dbQuestion.id);
   const friendVotes = friendVotesMap?.get(dbQuestion.id);
 
-  return {
-    id: dbQuestion.id,
-    visibleUserId: dbQuestion.is_anonymous ? undefined : dbQuestion.user_id,
-    title: dbQuestion.title,
-    prompt: dbQuestion.prompt,
-    promptImageUrl: dbQuestion.prompt_image_url || undefined,
-    left: {
-      id: "left",
-      label: dbQuestion.left_choice_label,
-      imageUrl: dbQuestion.left_choice_image_url || undefined,
-    },
-    right: {
-      id: "right",
-      label: dbQuestion.right_choice_label,
-      imageUrl: dbQuestion.right_choice_image_url || undefined,
-    },
+  return mapDbQuestion(
+    dbQuestion,
     votes,
-    meta: {
-      category: dbQuestion.category || undefined,
-      createdBy: dbQuestion.is_anonymous ? "Anonymous" : creatorUsername,
-    },
-    createdAt: dbQuestion.created_at,
-    hasVoted: !!userVote,
+    dbQuestion.is_anonymous,
+    dbQuestion.is_anonymous ? "Anonymous" : creatorUsername,
     userVote,
-    isOwnQuestion: currentUserId === dbQuestion.user_id,
-    friendVotes: friendVotes ? {
-      left: friendVotes.left.map(f => ({ userId: f.userId, avatarUrl: f.avatarUrl })),
-      right: friendVotes.right.map(f => ({ userId: f.userId, avatarUrl: f.avatarUrl })),
-    } : undefined,
-  };
+    currentUserId,
+    friendVotes,
+  );
 }
 
 const SCREEN_W = Dimensions.get("window").width;
@@ -330,7 +310,6 @@ export default function UserProfileScreen() {
           })),
         );
       } catch (err) {
-        console.error("Error fetching profile data:", err);
         setError("Failed to load profile");
       } finally {
         setIsLoading(false);
@@ -378,7 +357,7 @@ export default function UserProfileScreen() {
         setFollowers((prev) => [currentUserData, ...prev]);
       }
     } catch (err) {
-      console.error("Error toggling follow:", err);
+      // silently handled
     } finally {
       setIsFollowLoading(false);
       setTimeout(() => {
@@ -781,7 +760,6 @@ export default function UserProfileScreen() {
         return updated;
       });
     } catch (err) {
-      console.error("Failed to record vote:", err);
       setUserQuestions((prev) => {
         const updated = [...prev];
         const q = updated[currentIndex];
@@ -921,8 +899,7 @@ export default function UserProfileScreen() {
               });
             }),
           )
-          .catch((err) => {
-            console.error("Failed to delete vote:", err);
+          .catch(() => {
             pendingUndoIdsRef.current.delete(questionId);
             requestAnimationFrame(() => {
               setUndoneCardOverride((prev) =>
@@ -1006,8 +983,7 @@ export default function UserProfileScreen() {
           refreshVoteCounts(questionId);
           pendingUndoIdsRef.current.delete(questionId);
         })
-        .catch((err) => {
-          console.error("Failed to delete vote:", err);
+        .catch(() => {
           pendingUndoIdsRef.current.delete(questionId);
         });
     }
@@ -1142,8 +1118,7 @@ export default function UserProfileScreen() {
             });
           }),
         )
-        .catch((err) => {
-          console.error("Failed to delete vote:", err);
+        .catch(() => {
           pendingUndoIdsRef.current.delete(questionId);
           requestAnimationFrame(() => {
             setUndoneCardOverride((prev) =>

@@ -41,7 +41,6 @@ export function useEnsureProfile() {
 
         setProfile(profileData);
       } catch (err) {
-        console.error('Failed to sync profile:', err);
         setError(err instanceof Error ? err : new Error('Failed to sync profile'));
       } finally {
         setIsLoading(false);

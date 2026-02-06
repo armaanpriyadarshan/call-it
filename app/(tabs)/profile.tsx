@@ -1,3 +1,6 @@
+import { AutocompleteInput } from "@/components/forms";
+import { MyQuestionCard, VoteHistoryItemCard } from "@/components/profile";
+import { ProfileHeader, UserListItem } from "@/components/users";
 import { FullScreenChoice } from "@/components/voting";
 import { SUGGESTED_CATEGORIES } from "@/constants/categories";
 import { useProfileTabReset } from "@/contexts/profile-tab-context";
@@ -8,10 +11,13 @@ import {
     useRealtimeUserVotes,
 } from "@/lib/hooks/useRealtime";
 import {
+    checkFollowStatus,
+    followUser,
     getFollowing,
     getFollowersWithProfiles,
     getFollowingWithProfiles,
     getUserStats,
+    unfollowUser,
 } from "@/lib/queries/follows";
 import { ensureProfile, getProfile } from "@/lib/queries/profiles";
 import {
@@ -23,6 +29,7 @@ import {
 } from "@/lib/queries/questions";
 import {
     deleteVote,
+    FriendVote,
     getFriendVotesForQuestions,
     getQuestionVoters,
     getTotalVotesOnUserQuestions,
@@ -30,18 +37,12 @@ import {
     getUserVotingHistory,
     getVoteCounts,
     VoterProfile,
-    VoteWithQuestion,
 } from "@/lib/queries/votes";
-import {
-    checkFollowStatus,
-    followUser,
-    unfollowUser,
-} from "@/lib/queries/follows";
 import { createClerkSupabaseClient } from "@/lib/supabase";
 import type { ImageInfo, Question, User, VoteHistoryItem } from "@/types";
-import { formatDate } from "@/utils/date";
+import { mapDbQuestionToQuestion, mapVoteHistoryItem } from "@/utils/questions";
 import { getNormalizedPercentages } from "@/utils/voting";
-import { useAuth, useSession, useUser } from "@clerk/clerk-expo";
+import { useAuth, useUser } from "@clerk/clerk-expo";
 import Octicons from "@expo/vector-icons/Octicons";
 import * as Haptics from "expo-haptics";
 import * as ImagePicker from "expo-image-picker";
@@ -71,912 +72,6 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-const COLORS = {
-  background: "#1c1c1c",
-  border: "#333",
-  text: "white",
-  textSecondary: "#aaa",
-  placeholder: "#666",
-};
-
-const AutocompleteInput: React.FC<{
-  value: string;
-  onChangeText: (text: string) => void;
-  placeholder: string;
-  suggestions: string[];
-  style?: any;
-  onFocus?: () => void;
-  onBlur?: () => void;
-  onDropdownOpen?: () => void;
-  onDropdownClose?: () => void;
-}> = ({
-  value,
-  onChangeText,
-  placeholder,
-  suggestions,
-  style,
-  onFocus,
-  onBlur,
-  onDropdownOpen,
-  onDropdownClose,
-}) => {
-  const [isFocused, setIsFocused] = useState(false);
-  const [filteredSuggestions, setFilteredSuggestions] = useState<string[]>([]);
-  const fadeAnim = useRef(new Animated.Value(0)).current;
-  const isSelectingRef = useRef(false);
-  const blurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const inputRef = useRef<TextInput>(null);
-
-  const cancelBlurTimeout = useCallback(() => {
-    if (blurTimeoutRef.current) {
-      clearTimeout(blurTimeoutRef.current);
-      blurTimeoutRef.current = null;
-    }
-  }, []);
-
-  useEffect(() => {
-    if (value.trim() && isFocused) {
-      const filtered = suggestions.filter((cat) =>
-        cat.toLowerCase().includes(value.toLowerCase()),
-      );
-      setFilteredSuggestions(filtered);
-    } else if (isFocused) {
-      setFilteredSuggestions(suggestions);
-    } else {
-      setFilteredSuggestions([]);
-    }
-  }, [value, isFocused, suggestions]);
-
-  const isDropdownVisible = isFocused && filteredSuggestions.length > 0;
-
-  useEffect(() => {
-    if (isDropdownVisible) {
-      onDropdownOpen?.();
-      Animated.timing(fadeAnim, {
-        toValue: 1,
-        duration: 200,
-        useNativeDriver: true,
-      }).start();
-    } else {
-      onDropdownClose?.();
-      Animated.timing(fadeAnim, {
-        toValue: 0,
-        duration: 150,
-        useNativeDriver: true,
-      }).start();
-    }
-  }, [isDropdownVisible, fadeAnim, onDropdownOpen, onDropdownClose]);
-
-  useEffect(() => {
-    return () => cancelBlurTimeout();
-  }, [cancelBlurTimeout]);
-
-  const handleSelect = (suggestion: string) => {
-    cancelBlurTimeout();
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    isSelectingRef.current = true;
-    onChangeText(suggestion);
-    setIsFocused(false);
-
-    Animated.timing(fadeAnim, {
-      toValue: 0,
-      duration: 150,
-      useNativeDriver: true,
-    }).start(() => {
-      setTimeout(() => {
-        isSelectingRef.current = false;
-      }, 100);
-    });
-  };
-
-  return (
-    <View style={{ position: "relative", zIndex: isFocused ? 1000 : 1 }}>
-      <TextInput
-        ref={inputRef}
-        value={value}
-        onChangeText={(text) => {
-          onChangeText(text);
-          if (!isSelectingRef.current && text.trim() !== value.trim()) {
-            setIsFocused(true);
-          }
-        }}
-        onFocus={() => {
-          cancelBlurTimeout();
-          setIsFocused(true);
-          onFocus?.();
-        }}
-        onBlur={() => {
-          blurTimeoutRef.current = setTimeout(() => {
-            if (!isSelectingRef.current) {
-              setIsFocused(false);
-              onBlur?.();
-            }
-          }, 150);
-        }}
-        placeholder={placeholder}
-        placeholderTextColor={COLORS.placeholder}
-        style={style}
-      />
-      {isFocused && filteredSuggestions.length > 0 && (
-        <View
-          style={{
-            position: "absolute",
-            top: "100%",
-            left: 0,
-            right: 0,
-            marginTop: 4,
-            backgroundColor: COLORS.background,
-            borderRadius: 12,
-            borderWidth: 1,
-            borderColor: COLORS.border,
-            maxHeight: 200,
-            zIndex: 1001,
-            elevation: 10,
-            shadowColor: "#000",
-            shadowOffset: { width: 0, height: 2 },
-            shadowOpacity: 0.25,
-            shadowRadius: 3.84,
-            overflow: "hidden",
-          }}
-        >
-          <ScrollView
-            keyboardShouldPersistTaps='always'
-            style={{ maxHeight: 200 }}
-            nestedScrollEnabled
-            showsVerticalScrollIndicator={true}
-          >
-            {filteredSuggestions.map((suggestion, index) => (
-              <Pressable
-                key={index}
-                onPressIn={cancelBlurTimeout}
-                onPress={() => handleSelect(suggestion)}
-                style={({ pressed }) => ({
-                  padding: 12,
-                  borderBottomWidth:
-                    index < filteredSuggestions.length - 1 ? 1 : 0,
-                  borderBottomColor: "#222",
-                  backgroundColor: pressed ? "#2a2a2a" : "transparent",
-                })}
-              >
-                <Text style={{ color: COLORS.text, fontSize: 16 }}>
-                  {suggestion}
-                </Text>
-              </Pressable>
-            ))}
-          </ScrollView>
-        </View>
-      )}
-    </View>
-  );
-};
-function mapDbQuestionToQuestion(
-  dbQuestion: DbQuestion,
-  voteCounts: Map<string, { left: number; right: number }>,
-  isAnonymous: boolean,
-): Question {
-  const votes = voteCounts.get(dbQuestion.id) || { left: 0, right: 0 };
-
-  return {
-    id: dbQuestion.id,
-    visibleUserId: dbQuestion.is_anonymous ? undefined : dbQuestion.user_id,
-    title: dbQuestion.title,
-    prompt: dbQuestion.prompt,
-    promptImageUrl: dbQuestion.prompt_image_url || undefined,
-    left: {
-      id: "left",
-      label: dbQuestion.left_choice_label,
-      imageUrl: dbQuestion.left_choice_image_url || undefined,
-    },
-    right: {
-      id: "right",
-      label: dbQuestion.right_choice_label,
-      imageUrl: dbQuestion.right_choice_image_url || undefined,
-    },
-    votes,
-    meta: {
-      category: dbQuestion.category || undefined,
-      createdBy: dbQuestion.is_anonymous ? "Anonymous" : "You",
-    },
-    createdAt: dbQuestion.created_at,
-    isOwnQuestion: true,
-  };
-}
-
-function mapVoteHistoryItem(vote: VoteWithQuestion): VoteHistoryItem {
-  return {
-    questionId: vote.question_id,
-    questionTitle: vote.question?.title || "Unknown Question",
-    direction: vote.choice,
-    votedAt: vote.created_at,
-  };
-}
-
-const MiniVoteBar: React.FC<{
-  leftVotes: number;
-  rightVotes: number;
-  leftLabel: string;
-  rightLabel: string;
-}> = ({ leftVotes, rightVotes, leftLabel, rightLabel }) => {
-  const total = leftVotes + rightVotes;
-
-  if (total === 0) {
-    return (
-      <View
-        style={{
-          height: 28,
-          borderRadius: 6,
-          backgroundColor: "#0f0f0f",
-          borderWidth: 1,
-          borderColor: "#333",
-          alignItems: "center",
-          justifyContent: "center",
-        }}
-      >
-        <Text style={{ color: "#666", fontSize: 11 }}>No votes yet</Text>
-      </View>
-    );
-  }
-
-  const percentages = getNormalizedPercentages(leftVotes, rightVotes, total);
-  const leftWidth = percentages.left;
-  const rightWidth = percentages.right;
-
-  return (
-    <View
-      style={{
-        height: 28,
-        borderRadius: 6,
-        overflow: "hidden",
-        backgroundColor: "#0f0f0f",
-        borderWidth: 1,
-        borderColor: "#333",
-        flexDirection: "row",
-      }}
-    >
-      {leftWidth > 0 && (
-        <View
-          style={{
-            width: `${leftWidth}%`,
-            backgroundColor: "rgba(59, 130, 246, 0.2)",
-            borderRightWidth: rightWidth > 0 ? 1 : 0,
-            borderRightColor: "#333",
-            paddingHorizontal: 8,
-            justifyContent: "center",
-            alignItems: "flex-start",
-          }}
-        >
-          <Text
-            style={{
-              color: "#60a5fa",
-              fontSize: 11,
-              fontWeight: "600",
-            }}
-            numberOfLines={1}
-          >
-            {percentages.left}% {leftLabel}
-          </Text>
-        </View>
-      )}
-      {rightWidth > 0 && (
-        <View
-          style={{
-            width: `${rightWidth}%`,
-            backgroundColor: "rgba(239, 68, 68, 0.2)",
-            paddingHorizontal: 8,
-            justifyContent: "center",
-            alignItems: "flex-end",
-          }}
-        >
-          <Text
-            style={{
-              color: "#f87171",
-              fontSize: 11,
-              fontWeight: "600",
-            }}
-            numberOfLines={1}
-          >
-            {percentages.right}% {rightLabel}
-          </Text>
-        </View>
-      )}
-    </View>
-  );
-};
-
-const StatsCard: React.FC<{
-  label: string;
-  value: number;
-  icon: keyof typeof Octicons.glyphMap;
-}> = ({ label, value, icon }) => (
-  <View
-    style={{
-      backgroundColor: "#1c1c1c",
-      borderRadius: 8,
-      padding: 8,
-      borderWidth: 1,
-      borderColor: "#333",
-      flex: 1,
-      minWidth: 0,
-    }}
-  >
-    <View
-      style={{ flexDirection: "row", alignItems: "center", marginBottom: 4 }}
-    >
-      <Octicons name={icon} size={12} color='#aaa' style={{ marginRight: 4 }} />
-      <Text style={{ color: "#aaa", fontSize: 10, fontWeight: "500" }}>
-        {label}
-      </Text>
-    </View>
-    <Text style={{ color: "white", fontSize: 16, fontWeight: "700" }}>
-      {value}
-    </Text>
-  </View>
-);
-
-interface UserStats {
-  questionsCreated: number;
-  totalVotesCast: number;
-  totalEngagement: number;
-  followers: number;
-  following: number;
-}
-
-const ProfileHeader: React.FC<{
-  stats: UserStats;
-  onEditPress: () => void;
-  onSignOut: () => void;
-  onFollowersPress: () => void;
-  onFollowingPress: () => void;
-}> = ({
-  stats,
-  onEditPress,
-  onSignOut,
-  onFollowersPress,
-  onFollowingPress,
-}) => {
-  const { user } = useUser();
-
-  return (
-    <View
-      style={{
-        paddingTop: 60,
-        paddingBottom: 16,
-        paddingHorizontal: 24,
-        marginBottom: 12,
-        backgroundColor: "black",
-        borderBottomWidth: 1,
-        borderBottomColor: "#333",
-        justifyContent: "center",
-      }}
-    >
-      <View
-        style={{
-          flexDirection: "row",
-          alignItems: "stretch",
-          marginTop: 12,
-          marginBottom: 16,
-          minHeight: 80,
-        }}
-      >
-        <View
-          style={{
-            width: 80,
-            height: 80,
-            borderRadius: 40,
-            backgroundColor: "#1c1c1c",
-            borderWidth: 2,
-            borderColor: "#333",
-            alignItems: "center",
-            justifyContent: "center",
-            marginRight: 16,
-            overflow: "hidden",
-          }}
-        >
-          {user?.imageUrl ? (
-            <Image
-              source={{ uri: user.imageUrl }}
-              style={{
-                width: 76,
-                height: 76,
-                borderRadius: 38,
-              }}
-              resizeMode='cover'
-            />
-          ) : (
-            <View
-              style={{
-                width: 76,
-                height: 76,
-                borderRadius: 38,
-                backgroundColor: "white",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <View
-                style={{
-                  width: 60,
-                  height: 60,
-                  borderRadius: 30,
-                  backgroundColor: "black",
-                }}
-              />
-            </View>
-          )}
-        </View>
-        <View style={{ flex: 1, justifyContent: "center" }}>
-          <Text
-            style={{
-              color: "white",
-              fontSize: 20,
-              fontWeight: "700",
-              marginBottom: 8,
-            }}
-          >
-            {user?.username || user?.firstName || "User"}
-          </Text>
-          {user?.username && user?.firstName && (
-            <Text style={{ color: "#aaa", fontSize: 14, marginBottom: 8 }}>
-              {user.firstName}
-            </Text>
-          )}
-          <View style={{ flexDirection: "row", gap: 16 }}>
-            <Pressable onPress={onFollowersPress}>
-              <Text style={{ color: "white", fontSize: 16, fontWeight: "600" }}>
-                {stats.followers}
-              </Text>
-              <Text style={{ color: "#aaa", fontSize: 12 }}>followers</Text>
-            </Pressable>
-            <Pressable onPress={onFollowingPress}>
-              <Text style={{ color: "white", fontSize: 16, fontWeight: "600" }}>
-                {stats.following}
-              </Text>
-              <Text style={{ color: "#aaa", fontSize: 12 }}>following</Text>
-            </Pressable>
-          </View>
-        </View>
-        <View
-          style={{ flexDirection: "column", gap: 8, justifyContent: "center" }}
-        >
-          <Pressable
-            onPress={onEditPress}
-            style={({ pressed }) => ({
-              padding: 8,
-              borderRadius: 8,
-              borderWidth: 1,
-              borderColor: "#333",
-              backgroundColor: pressed ? "#1c1c1c" : "transparent",
-            })}
-          >
-            <Octicons name='pencil' size={16} color='#aaa' />
-          </Pressable>
-          <Pressable
-            onPress={onSignOut}
-            style={({ pressed }) => ({
-              padding: 8,
-              borderRadius: 8,
-              borderWidth: 1,
-              borderColor: "#333",
-              backgroundColor: pressed ? "#1c1c1c" : "transparent",
-            })}
-          >
-            <Octicons name='sign-out' size={16} color='#ff6b6b' />
-          </Pressable>
-        </View>
-      </View>
-
-      <View style={{ flexDirection: "row", gap: 8 }}>
-        <StatsCard
-          label='Questions'
-          value={stats.questionsCreated}
-          icon='question'
-        />
-        <StatsCard
-          label='Votes Cast'
-          value={stats.totalVotesCast}
-          icon='check-circle'
-        />
-        <StatsCard
-          label='Votes Received'
-          value={stats.totalEngagement}
-          icon='flame'
-        />
-      </View>
-    </View>
-  );
-};
-
-const UserListItem: React.FC<{ user: User }> = ({ user }) => {
-  const router = useRouter();
-
-  return (
-    <Pressable
-      onPress={() => {
-        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-        router.push({
-          pathname: "/user-profile",
-          params: { username: user.username, userId: user.id },
-        });
-      }}
-      style={({ pressed }) => ({
-        flexDirection: "row",
-        alignItems: "center",
-        paddingVertical: 12,
-        paddingHorizontal: 16,
-        borderBottomWidth: 1,
-        borderBottomColor: "#222",
-        backgroundColor: pressed ? "#1c1c1c" : "transparent",
-      })}
-    >
-      <View
-        style={{
-          width: 48,
-          height: 48,
-          borderRadius: 24,
-          backgroundColor: user.avatarUrl ? "transparent" : "#333",
-          marginRight: 12,
-          overflow: "hidden",
-        }}
-      >
-        {user.avatarUrl ? (
-          <Image
-            source={{ uri: user.avatarUrl }}
-            style={{ width: 48, height: 48 }}
-          />
-        ) : (
-          <View
-            style={{
-              width: 48,
-              height: 48,
-              backgroundColor: "#333",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            <Text style={{ color: "#aaa", fontSize: 18, fontWeight: "600" }}>
-              {(user.firstName || user.username || "U")[0].toUpperCase()}
-            </Text>
-          </View>
-        )}
-      </View>
-      <View style={{ flex: 1 }}>
-        <Text style={{ color: "white", fontSize: 16, fontWeight: "600" }}>
-          {user.username ||
-            (user.firstName && user.lastName
-              ? `${user.firstName} ${user.lastName}`
-              : user.firstName || "User")}
-        </Text>
-        {user.username && user.firstName && (
-          <Text style={{ color: "#aaa", fontSize: 14 }}>
-            {user.firstName}
-            {user.lastName ? ` ${user.lastName}` : ""}
-          </Text>
-        )}
-      </View>
-    </Pressable>
-  );
-};
-
-const MyQuestionCard: React.FC<{
-  question: Question;
-  onPress: () => void;
-  onEdit: () => void;
-  onDelete: () => void;
-}> = ({ question, onPress, onEdit, onDelete }) => {
-  const totalVotes = (question.votes?.left ?? 0) + (question.votes?.right ?? 0);
-
-  return (
-    <Pressable
-      onPress={onPress}
-      style={{
-        backgroundColor: "#1c1c1c",
-        borderRadius: 12,
-        overflow: "hidden",
-        marginBottom: 12,
-        borderWidth: 1,
-        borderColor: "#333",
-      }}
-    >
-      {question.promptImageUrl && (
-        <Image
-          source={{ uri: question.promptImageUrl }}
-          style={{ width: "100%", height: 120 }}
-          resizeMode='cover'
-        />
-      )}
-
-      <View
-        style={{ paddingTop: 16, paddingHorizontal: 16, paddingBottom: 10 }}
-      >
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
-            alignItems: "flex-start",
-            marginBottom: 4,
-          }}
-        >
-          <View style={{ flex: 1 }}>
-            <View
-              style={{
-                flexDirection: "row",
-                alignItems: "center",
-                marginBottom: 6,
-              }}
-            >
-              {question.meta?.category && (
-                <Text style={{ color: "#aaa", fontSize: 12, marginRight: 8 }}>
-                  {question.meta.category}
-                </Text>
-              )}
-            </View>
-            <Text
-              style={{
-                color: "white",
-                fontSize: 18,
-                fontWeight: "700",
-                marginBottom: 6,
-              }}
-            >
-              {question.title}
-            </Text>
-            <Text
-              style={{ color: "#aaa", fontSize: 14, marginBottom: 0 }}
-              numberOfLines={2}
-            >
-              {question.prompt}
-            </Text>
-          </View>
-        </View>
-
-        {totalVotes > 0 && (
-          <View style={{ marginTop: 8, marginBottom: 4 }}>
-            <MiniVoteBar
-              leftVotes={question.votes?.left ?? 0}
-              rightVotes={question.votes?.right ?? 0}
-              leftLabel={question.left.label}
-              rightLabel={question.right.label}
-            />
-          </View>
-        )}
-
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginTop: 4,
-          }}
-        >
-          <Text style={{ color: "#666", fontSize: 12 }}>
-            {totalVotes} {totalVotes === 1 ? "vote" : "votes"} •{" "}
-            {formatDate(question.createdAt || new Date().toISOString())}
-          </Text>
-          <View style={{ flexDirection: "row", gap: 8 }}>
-            <Pressable
-              onPress={(e) => {
-                e.stopPropagation();
-                onEdit();
-              }}
-              style={({ pressed }) => ({
-                padding: 8,
-                borderRadius: 8,
-                backgroundColor: pressed ? "#2a2a2a" : "transparent",
-              })}
-            >
-              <Octicons name='pencil' size={16} color='#aaa' />
-            </Pressable>
-            <Pressable
-              onPress={(e) => {
-                e.stopPropagation();
-                onDelete();
-              }}
-              style={({ pressed }) => ({
-                padding: 8,
-                borderRadius: 8,
-                backgroundColor: pressed ? "#2a2a2a" : "transparent",
-              })}
-            >
-              <Octicons name='trash' size={16} color='#ff6b6b' />
-            </Pressable>
-          </View>
-        </View>
-      </View>
-    </Pressable>
-  );
-};
-
-const VoteHistoryItemCard: React.FC<{
-  item: VoteHistoryItem;
-  question: Question | null;
-  onPress: () => void;
-  onDelete: () => void;
-}> = ({ item, question, onPress, onDelete }) => {
-  const router = useRouter();
-  const votes = question?.votes ?? { left: 0, right: 0 };
-  const totalVotes = votes.left + votes.right;
-  const userVoteCount = item.direction === "left" ? votes.left : votes.right;
-  const otherVoteCount = item.direction === "left" ? votes.right : votes.left;
-  const userPercentage =
-    totalVotes > 0 ? Math.round((userVoteCount / totalVotes) * 100) : 0;
-  const isMajority = userVoteCount >= otherVoteCount && totalVotes > 0;
-
-  return (
-    <Pressable
-      onPress={onPress}
-      style={{
-        backgroundColor: "#1c1c1c",
-        borderRadius: 12,
-        padding: 16,
-        marginBottom: 12,
-        borderWidth: 1,
-        borderColor: "#333",
-      }}
-    >
-      <View
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          marginBottom: 4,
-          flexWrap: "wrap",
-        }}
-      >
-        {question?.meta?.category && (
-          <Text style={{ color: "#aaa", fontSize: 12 }}>
-            {question.meta.category}
-          </Text>
-        )}
-        {question?.meta?.createdBy && (
-          <>
-            {question?.meta?.category && (
-              <Text style={{ color: "#aaa", fontSize: 12 }}> • </Text>
-            )}
-            {question.meta.createdBy !== "Anonymous" &&
-            question.visibleUserId ? (
-              <Pressable
-                onPress={(e) => {
-                  e.stopPropagation();
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  router.push({
-                    pathname: "/user-profile",
-                    params: {
-                      username: question.meta?.createdBy,
-                      userId: question.visibleUserId,
-                    },
-                  });
-                }}
-              >
-                {({ pressed }) => (
-                  <Text
-                    style={{
-                      color: "#aaa",
-                      fontSize: 12,
-                      textDecorationLine: pressed ? "underline" : "none",
-                    }}
-                  >
-                    {question.meta?.createdBy}
-                  </Text>
-                )}
-              </Pressable>
-            ) : (
-              <Text style={{ color: "#aaa", fontSize: 12 }}>
-                {question.meta.createdBy}
-              </Text>
-            )}
-          </>
-        )}
-      </View>
-      <View
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          marginBottom: 10,
-          flexWrap: "wrap",
-        }}
-      >
-        <Text
-          style={{
-            color: "white",
-            fontSize: 16,
-            fontWeight: "600",
-          }}
-        >
-          {item.questionTitle}
-        </Text>
-        <Octicons
-          name='chevron-right'
-          size={16}
-          color='#666'
-          style={{ marginLeft: 4 }}
-        />
-      </View>
-      <View
-        style={{
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "space-between",
-        }}
-      >
-        <View
-          style={{
-            flexDirection: "row",
-            alignItems: "center",
-            gap: 8,
-            flexWrap: "wrap",
-            flex: 1,
-          }}
-        >
-          <View
-            style={{
-              paddingHorizontal: 8,
-              paddingVertical: 4,
-              borderRadius: 6,
-              backgroundColor:
-                item.direction === "left"
-                  ? "rgba(59, 130, 246, 0.2)"
-                  : "rgba(239, 68, 68, 0.2)",
-              borderWidth: 1,
-              borderColor:
-                item.direction === "left"
-                  ? "rgba(59, 130, 246, 0.4)"
-                  : "rgba(239, 68, 68, 0.4)",
-            }}
-          >
-            <Text
-              style={{
-                color: item.direction === "left" ? "#60a5fa" : "#f87171",
-                fontSize: 12,
-                fontWeight: "600",
-              }}
-            >
-              Swiped {item.direction === "left" ? "Left" : "Right"}
-            </Text>
-          </View>
-          {totalVotes > 0 && (
-            <View
-              style={{
-                paddingHorizontal: 8,
-                paddingVertical: 4,
-                borderRadius: 6,
-                backgroundColor: isMajority
-                  ? "rgba(34, 197, 94, 0.2)"
-                  : "rgba(234, 179, 8, 0.2)",
-                borderWidth: 1,
-                borderColor: isMajority
-                  ? "rgba(34, 197, 94, 0.4)"
-                  : "rgba(234, 179, 8, 0.4)",
-              }}
-            >
-              <Text
-                style={{
-                  color: isMajority ? "#4ade80" : "#fbbf24",
-                  fontSize: 12,
-                  fontWeight: "600",
-                }}
-              >
-                {isMajority ? "Majority" : "Minority"} • {userPercentage}%
-              </Text>
-            </View>
-          )}
-        </View>
-        <Pressable
-          onPress={(e) => {
-            e.stopPropagation();
-            onDelete();
-          }}
-          style={({ pressed }) => ({
-            padding: 8,
-            borderRadius: 8,
-            backgroundColor: pressed ? "#2a2a2a" : "transparent",
-          })}
-        >
-          <Octicons name='trash' size={16} color='#ff6b6b' />
-        </Pressable>
-      </View>
-    </Pressable>
-  );
-};
-
 const SCREEN_W = Dimensions.get("window").width;
 const SWIPE_THRESHOLD = 0.25 * SCREEN_W;
 const SWIPE_OUT_DISTANCE = 1.2 * SCREEN_W;
@@ -986,7 +81,6 @@ const TAB_ANIMATION_DURATION = 250;
 
 export default function ProfileScreen() {
   const { signOut, getToken } = useAuth();
-  const { session } = useSession();
   const { user: clerkUser } = useUser();
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -1062,7 +156,6 @@ export default function ProfileScreen() {
   const [followersFollowingSearch, setFollowersFollowingSearch] = useState("");
 
   const [votersSheetVisible, setVotersSheetVisible] = useState(false);
-  const [votersSheetChoice, setVotersSheetChoice] = useState<"left" | "right">("left");
   const [votersSheetChoiceLabel, setVotersSheetChoiceLabel] = useState("");
   const [voters, setVoters] = useState<VoterProfile[]>([]);
   const [votersLoading, setVotersLoading] = useState(false);
@@ -1180,9 +273,17 @@ export default function ProfileScreen() {
           const questionIds = dbQuestions.map((q) => q.id);
           const voteCounts = await getVoteCounts(supabase, questionIds);
 
-          const displayQuestions = dbQuestions.map((q) =>
-            mapDbQuestionToQuestion(q, voteCounts, q.is_anonymous),
-          );
+          const displayQuestions = dbQuestions.map((q) => {
+            const votes = voteCounts.get(q.id) || { left: 0, right: 0 };
+            return mapDbQuestionToQuestion(
+              q,
+              votes,
+              q.is_anonymous,
+              q.is_anonymous ? "Anonymous" : "You",
+              undefined,
+              currentUser.id,
+            );
+          });
           setMyQuestions(displayQuestions);
         } else {
           setMyQuestions([]);
@@ -1275,8 +376,8 @@ export default function ProfileScreen() {
             const friendVotes = friendVotesMap.get(q.id);
             if (friendVotes) {
               q.friendVotes = {
-                left: friendVotes.left.map(f => ({ userId: f.userId, avatarUrl: f.avatarUrl })),
-                right: friendVotes.right.map(f => ({ userId: f.userId, avatarUrl: f.avatarUrl })),
+                left: friendVotes.left.map((f: FriendVote) => ({ userId: f.userId, avatarUrl: f.avatarUrl })),
+                right: friendVotes.right.map((f: FriendVote) => ({ userId: f.userId, avatarUrl: f.avatarUrl })),
               };
             }
           });
@@ -1307,8 +408,8 @@ export default function ProfileScreen() {
             avatarUrl: f.avatarUrl || undefined,
           })),
         );
-      } catch (err) {
-        console.error("Error fetching profile data:", err);
+      } catch {
+        // TODO: show user-facing error
       } finally {
         setIsLoading(false);
       }
@@ -1328,7 +429,7 @@ export default function ProfileScreen() {
   );
 
   const handleVoteReceived = useCallback(
-    async (questionId: string, payload: any) => {
+    async (questionId: string, payload: { eventType: string }) => {
       const sb = getSupabase();
       const counts = await getVoteCounts(sb, [questionId]);
       const newCounts = counts.get(questionId);
@@ -1362,7 +463,7 @@ export default function ProfileScreen() {
   useRealtimeUserQuestionVotes(supabase, myQuestionIds, handleVoteReceived);
 
   const handleQuestionCreated = useCallback(
-    async (questionData: any) => {
+    async (questionData: DbQuestion) => {
       const sb = getSupabase();
       const counts = await getVoteCounts(sb, [questionData.id]);
 
@@ -1418,7 +519,7 @@ export default function ProfileScreen() {
   );
 
   const handleVoteCast = useCallback(
-    async (voteData: any) => {
+    async (voteData: { question_id: string; choice: "left" | "right"; created_at: string }) => {
       const sb = getSupabase();
       const question = await getQuestion(sb, voteData.question_id);
       if (!question) return;
@@ -1471,7 +572,7 @@ export default function ProfileScreen() {
     [getSupabase],
   );
 
-  const handleVoteRemoved = useCallback((voteData: any) => {
+  const handleVoteRemoved = useCallback((voteData: { question_id: string }) => {
     setVoteHistory((prev) =>
       prev.filter((v) => v.questionId !== voteData.question_id),
     );
@@ -1564,8 +665,7 @@ export default function ProfileScreen() {
             Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
             await signOut();
             router.replace("/(auth)");
-          } catch (error) {
-            console.error("Sign out error:", error);
+          } catch {
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
           }
         },
@@ -1689,8 +789,7 @@ export default function ProfileScreen() {
     try {
       const sb = getSupabase();
       await updateQuestion(sb, questionId, updatedData);
-    } catch (err) {
-      console.error("Failed to update question:", err);
+    } catch {
       fetchProfileData(false);
     }
   };
@@ -1717,8 +816,7 @@ export default function ProfileScreen() {
             try {
               const sb = getSupabase();
               await deleteQuestion(sb, questionId);
-            } catch (err) {
-              console.error("Failed to delete question:", err);
+            } catch {
               fetchProfileData(false);
             }
           },
@@ -1755,8 +853,7 @@ export default function ProfileScreen() {
               if (currentUser?.id) {
                 await deleteVote(sb, questionId, currentUser.id);
               }
-            } catch (err) {
-              console.error("Failed to delete vote:", err);
+            } catch {
               fetchProfileData(false);
             }
           },
@@ -1784,7 +881,6 @@ export default function ProfileScreen() {
   ) => {
     if (!clerkUser?.id) return;
 
-    setVotersSheetChoice(choice);
     setVotersSheetChoiceLabel(choiceLabel);
     setVotersLoading(true);
     setVotersSheetVisible(true);
@@ -1811,8 +907,8 @@ export default function ProfileScreen() {
         })
       );
       setVoterFollowStatus(statusMap);
-    } catch (err) {
-      console.error("Failed to fetch voters:", err);
+    } catch {
+      // TODO: show user-facing error
     } finally {
       setVotersLoading(false);
     }
@@ -1852,8 +948,8 @@ export default function ProfileScreen() {
       });
 
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    } catch (err) {
-      console.error("Failed to toggle follow:", err);
+    } catch {
+      // TODO: show user-facing error
     } finally {
       setFollowingInProgress((prev) => {
         const newSet = new Set(prev);
@@ -2151,14 +1247,7 @@ export default function ProfileScreen() {
     };
   }, [cardPosition.x, cardOpacity]);
 
-  const cardRotate = cardPosition.x.interpolate({
-    inputRange: [-SCREEN_W, 0, SCREEN_W],
-    outputRange: ["-8deg", "0deg", "8deg"],
-  });
 
-  const cardStyle = {
-    transform: [{ translateX: cardPosition.x }, { rotate: cardRotate }],
-  };
 
   const handleVoteHistoryPress = (item: VoteHistoryItem) => {
     const foundIndex = voteHistory.findIndex(
@@ -2477,7 +1566,7 @@ export default function ProfileScreen() {
                 {voters.map((voter) => {
                   const isCurrentUser = voter.userId === clerkUser?.id;
                   const isFollowing = voterFollowStatus.get(voter.userId) || false;
-                  const isLoading = followingInProgress.has(voter.userId);
+                  const isVoterLoading = followingInProgress.has(voter.userId);
                   const displayName = voter.username || voter.firstName || "User";
 
                   return (
@@ -2548,7 +1637,7 @@ export default function ProfileScreen() {
                             e.stopPropagation();
                             toggleFollowVoter(voter.userId);
                           }}
-                          disabled={isLoading}
+                          disabled={isVoterLoading}
                           style={{
                             paddingHorizontal: 16,
                             paddingVertical: 8,
@@ -2558,7 +1647,7 @@ export default function ProfileScreen() {
                             borderColor: "#444",
                           }}
                         >
-                          {isLoading ? (
+                          {isVoterLoading ? (
                             <ActivityIndicator size="small" color={isFollowing ? "white" : "black"} />
                           ) : (
                             <Text

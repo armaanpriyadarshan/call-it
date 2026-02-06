@@ -357,7 +357,7 @@ export default function HomeScreen() {
       setQuestionsByTab(prev => ({ ...prev, [tab]: mappedQuestions }));
       setLoadedTabs(prev => new Set(prev).add(tab));
     } catch (err) {
-      console.error("Failed to fetch questions:", err);
+      // silently handled
     } finally {
       setLoading(false);
     }
@@ -578,7 +578,6 @@ export default function HomeScreen() {
         return updated;
       });
     } catch (err) {
-      console.error("Failed to record vote:", err);
       setQuestionsByTab((prev) => {
         const updated = { ...prev };
         for (const tabKey of Object.keys(updated)) {
@@ -755,8 +754,8 @@ export default function HomeScreen() {
       });
 
       const supabase = getSupabase();
-      deleteVote(supabase, questionId, currentUser.id).catch((err) => {
-        console.error("Failed to delete vote:", err);
+      deleteVote(supabase, questionId, currentUser.id).catch(() => {
+        // silently handled
       });
     }
 
@@ -835,8 +834,8 @@ export default function HomeScreen() {
       .then(() => {
         refreshVoteCounts(questionId);
       })
-      .catch((err) => {
-        console.error("Failed to delete vote:", err);
+      .catch(() => {
+        // silently handled
       });
 
     setFlowState("viewing");

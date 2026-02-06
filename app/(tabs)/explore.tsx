@@ -32,6 +32,7 @@ import {
 } from "@/lib/queries/votes";
 import { createClerkSupabaseClient } from "@/lib/supabase";
 import type { Question, User, VoteHistoryItem, VotingFlowState } from "@/types";
+import { mapDbQuestionToQuestion } from "@/utils/questions";
 import { getNormalizedPercentages } from "@/utils/voting";
 import { useAuth, useUser } from "@clerk/clerk-expo";
 import Octicons from "@expo/vector-icons/Octicons";
@@ -54,48 +55,6 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-function mapDbQuestionToQuestion(
-  dbQuestion: DbQuestion,
-  votes: { left: number; right: number },
-  creatorUsername: string | null,
-  isAnonymous: boolean,
-  currentUserId: string | null,
-  userVote: "left" | "right" | undefined,
-  friendVotes?: { left: { userId: string; avatarUrl: string | null }[]; right: { userId: string; avatarUrl: string | null }[] },
-): Question {
-  const isOwnQuestion =
-    currentUserId !== null && dbQuestion.user_id === currentUserId;
-  return {
-    id: dbQuestion.id,
-    visibleUserId: dbQuestion.user_id,
-    title: dbQuestion.title,
-    prompt: dbQuestion.prompt,
-    promptImageUrl: dbQuestion.prompt_image_url ?? undefined,
-    left: {
-      id: "left",
-      label: dbQuestion.left_choice_label,
-      imageUrl: dbQuestion.left_choice_image_url ?? undefined,
-    },
-    right: {
-      id: "right",
-      label: dbQuestion.right_choice_label,
-      imageUrl: dbQuestion.right_choice_image_url ?? undefined,
-    },
-    votes,
-    meta: {
-      category: dbQuestion.category ?? undefined,
-      createdBy: isAnonymous ? "Anonymous" : (creatorUsername ?? "Unknown"),
-    },
-    createdAt: dbQuestion.created_at,
-    hasVoted: userVote !== undefined,
-    userVote,
-    isOwnQuestion,
-    friendVotes: friendVotes ? {
-      left: friendVotes.left.map(f => ({ userId: f.userId, avatarUrl: f.avatarUrl })),
-      right: friendVotes.right.map(f => ({ userId: f.userId, avatarUrl: f.avatarUrl })),
-    } : undefined,
-  };
-}
 
 const SCREEN_W = Dimensions.get("window").width;
 const SWIPE_THRESHOLD = 0.25 * SCREEN_W;
@@ -294,17 +253,17 @@ export default function ExploreScreen() {
           return mapDbQuestionToQuestion(
             dbQ,
             votes,
-            displayName,
             dbQ.is_anonymous,
-            currentUser?.id ?? null,
+            displayName,
             userVote,
+            currentUser?.id ?? undefined,
             friendVotes,
           );
         });
 
         setQuestions(mappedQuestions);
       } catch (err) {
-        console.error("Failed to fetch questions:", err);
+        // silently handled
       } finally {
         setLoading(false);
         setRefreshing(false);
@@ -319,7 +278,7 @@ export default function ExploreScreen() {
       const popularCategories = await getPopularCategories(supabase, { limit: 12 });
       setCategories(popularCategories);
     } catch (err) {
-      console.error("Failed to fetch categories:", err);
+      // silently handled
     }
   }, [getSupabase]);
 
@@ -382,10 +341,10 @@ export default function ExploreScreen() {
             return mapDbQuestionToQuestion(
               dbQ,
               votes,
-              displayName,
               dbQ.is_anonymous,
-              currentUser?.id ?? null,
+              displayName,
               userVote,
+              currentUser?.id ?? undefined,
             );
           });
 
@@ -411,7 +370,6 @@ export default function ExploreScreen() {
           });
         }
       } catch (err) {
-        console.error("Failed to perform search:", err);
         setSearchResults({
           questions: [],
           users: [],
@@ -474,10 +432,10 @@ export default function ExploreScreen() {
           return mapDbQuestionToQuestion(
             dbQ,
             votes,
-            displayName,
             dbQ.is_anonymous,
-            currentUser?.id ?? null,
+            displayName,
             userVote,
+            currentUser?.id ?? undefined,
           );
         });
 
@@ -489,7 +447,7 @@ export default function ExploreScreen() {
         setQuestionsOffset(newOffset);
       }
     } catch (err) {
-      console.error("Failed to load more questions:", err);
+      // silently handled
     } finally {
       setLoadingMoreQuestions(false);
     }
@@ -520,7 +478,7 @@ export default function ExploreScreen() {
         setUsersOffset(newOffset);
       }
     } catch (err) {
-      console.error("Failed to load more users:", err);
+      // silently handled
     } finally {
       setLoadingMoreUsers(false);
     }
@@ -962,7 +920,6 @@ export default function ExploreScreen() {
         return updated;
       });
     } catch (err) {
-      console.error("Failed to record vote:", err);
       setQuestions((prev) => {
         const updated = [...prev];
         const q = updated[currentIndex];
@@ -1114,8 +1071,7 @@ export default function ExploreScreen() {
             });
           }),
         )
-        .catch((err) => {
-          console.error("Failed to delete vote:", err);
+        .catch(() => {
           pendingUndoIdsRef.current.delete(questionId);
           requestAnimationFrame(() => {
             setUndoneCardOverride((prev) =>
@@ -1202,8 +1158,7 @@ export default function ExploreScreen() {
           refreshVoteCounts(questionId);
           pendingUndoIdsRef.current.delete(questionId);
         })
-        .catch((err) => {
-          console.error("Failed to delete vote:", err);
+        .catch(() => {
           pendingUndoIdsRef.current.delete(questionId);
         });
     }
@@ -1339,8 +1294,7 @@ export default function ExploreScreen() {
           });
         }),
       )
-      .catch((err) => {
-        console.error("Failed to delete vote:", err);
+      .catch(() => {
         pendingUndoIdsRef.current.delete(questionId);
         requestAnimationFrame(() => {
           setUndoneCardOverride((prev) =>
@@ -1473,7 +1427,6 @@ export default function ExploreScreen() {
         });
         setAutocompleteSuggestions(results);
       } catch (err) {
-        console.error("Autocomplete search failed:", err);
         setAutocompleteSuggestions([]);
       } finally {
         setAutocompleteLoading(false);

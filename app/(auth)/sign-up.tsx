@@ -106,19 +106,14 @@ export default function SignUp() {
                 const userId = signUp.createdUserId;
                 if (userId && trimmedUsername && session) {
                     try {
-                        console.log('Creating profile for user:', userId, 'with username:', trimmedUsername);
                         const supabase = createClerkSupabaseClient(session);
                         await createProfile(supabase, { user_id: userId, username: trimmedUsername });
-                        console.log('Profile created successfully');
                     } catch (err: any) {
-                        console.error('Failed to create profile:', err);
-                        console.error('Error details:', JSON.stringify(err, null, 2));
                         setServerError(`Profile creation failed: ${err?.message || 'Unknown error'}`);
                         setBusy(false);
                         return;
                     }
                 } else {
-                    console.error('Missing userId or username:', { userId, trimmedUsername });
                     setServerError('Missing user information. Please try again.');
                     setBusy(false);
                     return;
