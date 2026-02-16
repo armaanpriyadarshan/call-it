@@ -20,7 +20,7 @@
     "@supabase/supabase-js": "^2.93.1",
     "base64-arraybuffer": "^1.0.2",
     "eas-cli": "^16.32.0",
-    "expo": "~54.0.31",
+    "expo": "~54.0.33",
     "expo-constants": "~18.0.13",
     "expo-dev-client": "~6.0.20",
     "expo-file-system": "^19.0.21",
